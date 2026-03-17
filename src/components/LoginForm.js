@@ -38,7 +38,13 @@ export default function LoginForm() {
         .maybeSingle();
       role = prof?.role || "sales";
     }
-    router.push(role === "super_admin" ? "/admin" : role === "general_user" ? "/general" : "/sales");
+    router.push(
+      role === "super_admin"
+        ? "/admin/dashboard"
+        : role === "general_user"
+          ? "/general"
+          : "/sales/dashboard"
+    );
     setLoading(false);
   };
 

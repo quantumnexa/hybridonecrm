@@ -22,7 +22,13 @@ export default function AuthGuard({ allowedRoles, children }) {
         session.user?.user_metadata?.role ||
         "sales";
       if (Array.isArray(allowedRoles) && !allowedRoles.includes(role)) {
-        router.replace(role === "super_admin" ? "/admin" : "/sales");
+        router.replace(
+          role === "super_admin"
+            ? "/admin/dashboard"
+            : role === "general_user"
+              ? "/general"
+              : "/sales/dashboard"
+        );
         return;
       }
       setReady(true);
