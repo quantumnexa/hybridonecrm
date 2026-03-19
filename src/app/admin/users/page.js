@@ -21,13 +21,17 @@ export default function Page() {
 
   const fetchUsers = async () => {
     setError("");
-    const res = await fetch("/api/admin-users", { method: "GET" });
-    if (!res.ok) {
-      setError("Failed to load users");
-      return;
+    try {
+      const res = await fetch("/api/admin-users", { method: "GET" });
+      if (!res.ok) {
+        setError("Failed to load users");
+        return;
+      }
+      const json = await res.json().catch(() => ({}));
+      setUsers(json.users || []);
+    } catch (e) {
+      setError(e?.message || "Failed to load users");
     }
-    const json = await res.json();
-    setUsers(json.users || []);
   };
 
   useEffect(() => {

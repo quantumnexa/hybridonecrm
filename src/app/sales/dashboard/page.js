@@ -4,6 +4,12 @@ import { supabase, getUserCached } from "@/lib/supabase";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+const usdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+
 export default function Page() {
   const [userId, setUserId] = useState(null);
   const [error, setError] = useState("");
@@ -158,7 +164,7 @@ export default function Page() {
           </div>
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm lg:col-span-2">
             <div className="text-xs text-black/60">My Revenue</div>
-            <div className="mt-1 text-2xl font-bold">₹{Number(metrics.revenue).toLocaleString(undefined, { minimumFractionDigits: 0 })}</div>
+            <div className="mt-1 text-2xl font-bold">{usdFormatter.format(metrics.revenue)}</div>
           </div>
         </div>
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase, supabaseConfigured } from "@/lib/supabase";
 import Image from "next/image";
 
 export default function LoginForm() {
@@ -14,14 +14,26 @@ export default function LoginForm() {
 
   const onSubmit = async (e) => {
     e.preventDefault();
+    if (!supabaseConfigured) {
+      setError("Missing Supabase environment variables.");
+      return;
+    }
     setLoading(true);
     setError("");
-    const { data, error: err } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (err) {
-      setError(err.message);
+    let data;
+    try {
+      const res = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      data = res.data;
+      if (res.error) {
+        setError(res.error.message);
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      setError(err?.message || "Failed to sign in");
       setLoading(false);
       return;
     }

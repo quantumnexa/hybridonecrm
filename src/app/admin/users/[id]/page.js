@@ -23,10 +23,15 @@ export default function UserDetailPage() {
   const loadAll = useCallback(async () => {
     if (!id) return;
     setError("");
-    const res = await fetch("/api/admin-users");
-    const j = await res.json().catch(() => ({}));
-    const found = Array.isArray(j.users) ? j.users.find((u) => u.id === id) : null;
-    setUser(found || null);
+    try {
+      const res = await fetch("/api/admin-users");
+      const j = await res.json().catch(() => ({}));
+      const found = Array.isArray(j.users) ? j.users.find((u) => u.id === id) : null;
+      setUser(found || null);
+    } catch (e) {
+      setUser(null);
+      setError(e?.message || "Failed to load users");
+    }
     const { data: prof } = await supabase.from("profiles").select("*").eq("user_id", id).maybeSingle();
     setProfile(prof || null);
     const { data: ts } = await supabase.from("tasks").select("*").eq("assignee_id", id).order("created_at", { ascending: false });
