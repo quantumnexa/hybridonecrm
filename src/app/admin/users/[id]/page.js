@@ -11,6 +11,7 @@ export default function UserDetailPage() {
   const [profile, setProfile] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [updates, setUpdates] = useState([]);
+  const [workSessions, setWorkSessions] = useState([]);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({ title: "", description: "", due_at: "", status: "open" });
@@ -48,7 +49,41 @@ export default function UserDetailPage() {
     } else {
       setTaskDocs({});
     }
+    const { data: ws } = await supabase
+      .from("work_sessions")
+      .select("*")
+      .eq("user_id", id)
+      .order("login_at", { ascending: false })
+      .limit(200);
+    setWorkSessions(ws || []);
   }, [id]);
+
+  const todayKey = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }, []);
+
+  const workByDay = useMemo(() => {
+    const map = {};
+    (workSessions || []).forEach((s) => {
+      const d = s.work_date || (s.login_at ? String(s.login_at).slice(0, 10) : "");
+      if (!d) return;
+      if (!map[d]) map[d] = { date: d, minutes: 0, firstIn: null, lastOut: null };
+      map[d].minutes += Number(s.duration_minutes || 0);
+      const li = s.login_at ? new Date(s.login_at) : null;
+      const lo = s.logout_at ? new Date(s.logout_at) : null;
+      if (li && (!map[d].firstIn || li < map[d].firstIn)) map[d].firstIn = li;
+      if (lo && (!map[d].lastOut || lo > map[d].lastOut)) map[d].lastOut = lo;
+    });
+    return Object.values(map).sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [workSessions]);
+
+  const todaySummary = useMemo(() => {
+    return workByDay.find((x) => x.date === todayKey) || null;
+  }, [workByDay, todayKey]);
 
   const stats = useMemo(() => {
     const total = tasks.length;
@@ -229,6 +264,49 @@ export default function UserDetailPage() {
             <div className="text-sm">Email: {user?.email || "-"}</div>
             <div className="text-sm">Role: {profile?.role || "-"}</div>
             {profile?.position && <div className="text-sm">Position: {profile.position}</div>}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-heading">Work Hours (Today)</div>
+            <div className="mt-3 text-3xl font-bold">{todaySummary ? (todaySummary.minutes / 60).toFixed(2) : "0.00"}</div>
+            <div className="mt-2 text-xs text-black/60">
+              In: {todaySummary?.firstIn ? todaySummary.firstIn.toLocaleTimeString() : "-"} • Out:{" "}
+              {todaySummary?.lastOut ? todaySummary.lastOut.toLocaleTimeString() : "-"}
+            </div>
+          </div>
+          <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm md:col-span-2">
+            <div className="text-sm font-semibold text-heading">Daily Work Hours</div>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-black/5 text-black/70">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Date</th>
+                    <th className="px-3 py-2 text-left">First Login</th>
+                    <th className="px-3 py-2 text-left">Last Logout</th>
+                    <th className="px-3 py-2 text-right">Hours</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {workByDay.slice(0, 14).map((d) => (
+                    <tr key={d.date} className="border-t">
+                      <td className="px-3 py-2">{d.date}</td>
+                      <td className="px-3 py-2">{d.firstIn ? d.firstIn.toLocaleString() : "-"}</td>
+                      <td className="px-3 py-2">{d.lastOut ? d.lastOut.toLocaleString() : "-"}</td>
+                      <td className="px-3 py-2 text-right">{(Number(d.minutes || 0) / 60).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                  {workByDay.length === 0 && (
+                    <tr>
+                      <td className="px-3 py-6 text-center text-black/60" colSpan={4}>
+                        No work sessions yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 

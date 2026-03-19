@@ -51,7 +51,8 @@ export default function GeneralTaskDetailPage() {
       return;
     }
 
-    if (!t?.assignee_id || t.assignee_id !== uid) {
+    const canView = (t?.assignee_id && t.assignee_id === uid) || (t?.created_by && t.created_by === uid);
+    if (!canView) {
       setTask(null);
       setUnauthorized(true);
       setDocs([]);
@@ -112,12 +113,12 @@ export default function GeneralTaskDetailPage() {
           : "Open";
 
   const canComplete = useMemo(() => {
-    return !!task && task.status !== "completed" && task.status !== "cancelled";
-  }, [task]);
+    return !!task && task.status !== "completed" && task.status !== "cancelled" && task.assignee_id === userId;
+  }, [task, userId]);
 
   const canHold = useMemo(() => {
-    return !!task && task.status !== "in_progress" && task.status !== "completed" && task.status !== "cancelled";
-  }, [task]);
+    return !!task && task.status !== "in_progress" && task.status !== "completed" && task.status !== "cancelled" && task.assignee_id === userId;
+  }, [task, userId]);
 
   const addUpdate = async () => {
     if (!id || !userId || !noteDraft.trim()) return;
@@ -287,6 +288,10 @@ export default function GeneralTaskDetailPage() {
                 <div className="font-semibold">{task.due_at ? new Date(task.due_at).toLocaleString() : "-"}</div>
               </div>
               <div>
+                <div className="text-xs text-black/60">Assigned To</div>
+                <div className="font-semibold">{task.assignee_id ? profileMap[task.assignee_id] || "Unknown" : "Unassigned"}</div>
+              </div>
+              <div>
                 <div className="text-xs text-black/60">Assigned By</div>
                 <div className="font-semibold">{task.created_by ? profileMap[task.created_by] || "Unknown" : "Unknown"}</div>
               </div>
@@ -401,4 +406,3 @@ export default function GeneralTaskDetailPage() {
     </div>
   );
 }
-

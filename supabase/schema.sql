@@ -204,3 +204,56 @@ create table if not exists public.task_documents (
 );
 alter table public.task_documents disable row level security;
 create index if not exists task_documents_task_id_idx on public.task_documents(task_id);
+
+-- Work sessions (daily login/logout tracking)
+create table if not exists public.work_sessions (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete set null,
+  user_id uuid references auth.users(id) on delete cascade,
+  role text,
+  work_date date not null,
+  login_at timestamptz not null default now(),
+  logout_at timestamptz,
+  duration_minutes integer not null default 0,
+  created_at timestamptz default now()
+);
+alter table public.work_sessions disable row level security;
+create index if not exists work_sessions_user_date_idx on public.work_sessions(user_id, work_date);
+create index if not exists work_sessions_date_idx on public.work_sessions(work_date);
+create index if not exists work_sessions_org_idx on public.work_sessions(org_id);
+
+-- Enable RLS and restrict access:
+-- - Employees can only see/insert/update their own rows
+-- - Super Admin can see all rows
+alter table public.work_sessions enable row level security;
+
+drop policy if exists "work_sessions_select_own_or_admin" on public.work_sessions;
+create policy "work_sessions_select_own_or_admin"
+on public.work_sessions
+for select
+to authenticated
+using (
+  user_id = auth.uid()
+  or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
+);
+
+drop policy if exists "work_sessions_insert_own" on public.work_sessions;
+create policy "work_sessions_insert_own"
+on public.work_sessions
+for insert
+to authenticated
+with check (user_id = auth.uid());
+
+drop policy if exists "work_sessions_update_own_or_admin" on public.work_sessions;
+create policy "work_sessions_update_own_or_admin"
+on public.work_sessions
+for update
+to authenticated
+using (
+  user_id = auth.uid()
+  or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
+)
+with check (
+  user_id = auth.uid()
+  or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
+);

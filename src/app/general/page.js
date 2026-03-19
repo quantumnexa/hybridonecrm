@@ -5,11 +5,13 @@ import Link from "next/link";
 
 export default function GeneralTasksPage() {
   const [tasks, setTasks] = useState([]);
+  const [assignedByMe, setAssignedByMe] = useState([]);
   const [profiles, setProfiles] = useState([]);
+  const [generalProfiles, setGeneralProfiles] = useState([]);
   const [userId, setUserId] = useState(null);
   const [error, setError] = useState("");
   const [taskDocs, setTaskDocs] = useState({});
-  const [createForm, setCreateForm] = useState({ title: "", description: "", due_at: "" });
+  const [createForm, setCreateForm] = useState({ title: "", description: "", due_at: "", assignee_id: "" });
   const [createFiles, setCreateFiles] = useState([]);
 
   const loadAll = useCallback(async () => {
@@ -20,9 +22,12 @@ export default function GeneralTasksPage() {
     if (!uid) return;
     const { data: ts } = await supabase.from("tasks").select("*").eq("assignee_id", uid).order("created_at", { ascending: false });
     setTasks(ts || []);
+    const { data: myAssigned } = await supabase.from("tasks").select("*").eq("created_by", uid).order("created_at", { ascending: false });
+    setAssignedByMe(myAssigned || []);
     const { data: profs } = await supabase.from("profiles").select("user_id, display_name, role").order("created_at", { ascending: false });
     setProfiles(profs || []);
-    const ids = (ts || []).map((t) => t.id);
+    setGeneralProfiles((profs || []).filter((p) => p.role === "general_user"));
+    const ids = Array.from(new Set([...(ts || []).map((t) => t.id), ...(myAssigned || []).map((t) => t.id)]));
     if (ids.length) {
       const { data: docsRes } = await supabase.from("task_documents").select("*").in("task_id", ids).order("created_at", { ascending: false });
       const grouped = (docsRes || []).reduce((acc, d) => { (acc[d.task_id] ||= []).push(d); return acc; }, {});
@@ -47,7 +52,7 @@ export default function GeneralTasksPage() {
       description: createForm.description?.trim() || null,
       due_at: createForm.due_at || null,
       status: "open",
-      assignee_id: userId,
+      assignee_id: createForm.assignee_id || userId,
       created_by: userId,
     };
     const { data, error: err } = await supabase.from("tasks").insert(payload).select("*").single();
@@ -71,7 +76,7 @@ export default function GeneralTasksPage() {
         }
       }
     }
-    setCreateForm({ title: "", description: "", due_at: "" });
+    setCreateForm({ title: "", description: "", due_at: "", assignee_id: "" });
     setCreateFiles([]);
     await loadAll();
   };
@@ -84,10 +89,22 @@ export default function GeneralTasksPage() {
       </div>
 
       <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
-        <div className="text-sm font-semibold text-heading">Create My Task</div>
+        <div className="text-sm font-semibold text-heading">Create Task</div>
         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
           <input className="rounded-md border border-black/10 px-2 py-2" placeholder="Title" value={createForm.title} onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))} />
           <input type="datetime-local" className="rounded-md border border-black/10 px-2 py-2" value={createForm.due_at} onChange={(e) => setCreateForm((f) => ({ ...f, due_at: e.target.value }))} />
+          <select
+            className="rounded-md border border-black/10 px-2 py-2"
+            value={createForm.assignee_id}
+            onChange={(e) => setCreateForm((f) => ({ ...f, assignee_id: e.target.value }))}
+          >
+            <option value="">Assign to (default: me)</option>
+            {generalProfiles.map((p) => (
+              <option key={p.user_id} value={p.user_id}>
+                {p.display_name || p.user_id}
+              </option>
+            ))}
+          </select>
           <textarea className="md:col-span-2 rounded-md border border-black/10 px-2 py-2" rows={2} placeholder="Description (optional)" value={createForm.description} onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))} />
           <input className="md:col-span-2 rounded-md border border-black/10 px-2 py-2" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx" multiple onChange={(e) => setCreateFiles(Array.from(e.target.files || []))} />
         </div>
@@ -141,6 +158,53 @@ export default function GeneralTasksPage() {
             );
           })}
           {tasks.length === 0 && <div className="text-sm text-black/60">No tasks assigned.</div>}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
+        <div className="text-sm font-semibold text-heading">Assigned By Me</div>
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {assignedByMe.map((t) => {
+            const assignee = profiles.find((p) => p.user_id === t.assignee_id);
+            const attachmentsCount = (taskDocs[t.id] || []).length;
+            const statusLabel =
+              t.status === "in_progress"
+                ? "In Progress"
+                : t.status === "completed"
+                  ? "Completed"
+                  : t.status === "cancelled"
+                    ? "Cancelled"
+                    : "Open";
+            const dueText = t.due_at ? new Date(t.due_at).toLocaleString() : "No deadline";
+            return (
+              <Link
+                key={t.id}
+                href={`/general/tasks/${t.id}`}
+                className="block rounded-xl border border-black/10 bg-white p-4 shadow-sm hover:bg-black/[0.02]"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-heading truncate">{t.title}</div>
+                    <div className="mt-1 text-xs text-black/60">
+                      {statusLabel} • {dueText}
+                      {assignee ? ` • Assigned to: ${assignee.display_name || assignee.user_id}` : ""}
+                    </div>
+                  </div>
+                  <div className="shrink-0 rounded-md border border-black/10 px-2 py-1 text-xs text-black/70">
+                    {attachmentsCount} files
+                  </div>
+                </div>
+                <div className="mt-3 text-sm text-black/80">
+                  {(t.description || "").trim() ? (
+                    <div className="line-clamp-3">{t.description}</div>
+                  ) : (
+                    <div className="text-black/60">No description.</div>
+                  )}
+                </div>
+              </Link>
+            );
+          })}
+          {assignedByMe.length === 0 && <div className="text-sm text-black/60">No tasks assigned by you.</div>}
         </div>
       </div>
     </div>

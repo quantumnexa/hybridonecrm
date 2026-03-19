@@ -15,6 +15,7 @@ export default function AdminLayout({ children }) {
             { href: "/admin/tasks", label: "Tasks", icon: "tasks" },
             { href: "/admin/quotation", label: "Quotation", icon: "quotation" },
             { href: "/admin/users", label: "User management", icon: "users" },
+            { href: "/admin/attendance", label: "Attendance", icon: "reports" },
             { href: "/admin/reports", label: "Reports & Analytics", icon: "reports" },
             { href: "/admin/settings", label: "System setting", icon: "settings" },
           ]}
@@ -24,5 +25,4 @@ export default function AdminLayout({ children }) {
     </AuthGuard>
   );
 }
-
 
