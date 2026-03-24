@@ -1,7 +1,59 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase, getUserCached } from "@/lib/supabase";
 import Link from "next/link";
+
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function addDays(d, n) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+function weekStart(d) {
+  const x = startOfDay(d);
+  const day = x.getDay();
+  const diff = (day + 6) % 7;
+  x.setDate(x.getDate() - diff);
+  return x;
+}
+
+function boundsForPreset(p) {
+  const now = new Date();
+  if (p === "today") {
+    const from = startOfDay(now);
+    const to = addDays(from, 1);
+    return { from, to };
+  }
+  if (p === "yesterday") {
+    const to = startOfDay(now);
+    const from = addDays(to, -1);
+    return { from, to };
+  }
+  if (p === "this_week") {
+    const from = weekStart(now);
+    const to = addDays(from, 7);
+    return { from, to };
+  }
+  if (p === "last_week") {
+    const to = weekStart(now);
+    const from = addDays(to, -7);
+    return { from, to };
+  }
+  if (p === "custom") return null;
+  return null;
+}
+
+function toIsoInputValue(d) {
+  if (!d) return "";
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 16);
+}
 
 export default function GeneralTasksPage() {
   const [tasks, setTasks] = useState([]);
@@ -17,6 +69,20 @@ export default function GeneralTasksPage() {
   const [editForm, setEditForm] = useState({ title: "", description: "", due_at: "", assignee_id: "", status: "open" });
   const [editFiles, setEditFiles] = useState([]);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [preset, setPreset] = useState("this_week");
+  const [customFrom, setCustomFrom] = useState(() => {
+    const b = boundsForPreset("this_week");
+    return b ? toIsoInputValue(b.from) : "";
+  });
+  const [customTo, setCustomTo] = useState(() => {
+    const b = boundsForPreset("this_week");
+    return b ? toIsoInputValue(b.to) : "";
+  });
+  const [bounds, setBounds] = useState(() => {
+    const b = boundsForPreset("this_week");
+    return b ? { from: b.from.toISOString(), to: b.to.toISOString() } : { from: "", to: "" };
+  });
+  const [query, setQuery] = useState("");
 
   const loadAll = useCallback(async () => {
     setError("");
@@ -24,9 +90,13 @@ export default function GeneralTasksPage() {
     const uid = u?.id || null;
     setUserId(uid);
     if (!uid) return;
-    const { data: ts } = await supabase.from("tasks").select("*").eq("assignee_id", uid).order("created_at", { ascending: false });
+    let myQ = supabase.from("tasks").select("*").eq("assignee_id", uid);
+    if (bounds.from && bounds.to) myQ = myQ.gte("created_at", bounds.from).lt("created_at", bounds.to);
+    const { data: ts } = await myQ.order("created_at", { ascending: false });
     setTasks(ts || []);
-    const { data: myAssigned } = await supabase.from("tasks").select("*").eq("created_by", uid).order("created_at", { ascending: false });
+    let byMeQ = supabase.from("tasks").select("*").eq("created_by", uid);
+    if (bounds.from && bounds.to) byMeQ = byMeQ.gte("created_at", bounds.from).lt("created_at", bounds.to);
+    const { data: myAssigned } = await byMeQ.order("created_at", { ascending: false });
     setAssignedByMe(myAssigned || []);
     const { data: profs } = await supabase.from("profiles").select("user_id, display_name, role").order("created_at", { ascending: false });
     setProfiles(profs || []);
@@ -39,7 +109,7 @@ export default function GeneralTasksPage() {
     } else {
       setTaskDocs({});
     }
-  }, []);
+  }, [bounds.from, bounds.to]);
 
   useEffect(() => {
     const init = async () => {
@@ -47,6 +117,55 @@ export default function GeneralTasksPage() {
     };
     init();
   }, [loadAll]);
+
+  const changePreset = (p) => {
+    setPreset(p);
+    if (p === "custom") return;
+    const b = boundsForPreset(p);
+    if (!b) return;
+    setCustomFrom(toIsoInputValue(b.from));
+    setCustomTo(toIsoInputValue(b.to));
+    setBounds({ from: b.from.toISOString(), to: b.to.toISOString() });
+  };
+
+  const applyCustom = () => {
+    if (!customFrom || !customTo) return;
+    const from = new Date(customFrom);
+    const to = new Date(customTo);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return;
+    if (to <= from) return;
+    setBounds({ from: from.toISOString(), to: to.toISOString() });
+  };
+
+  const profileMap = useMemo(() => {
+    const map = {};
+    (profiles || []).forEach((p) => {
+      map[p.user_id] = p.display_name || p.user_id;
+    });
+    return map;
+  }, [profiles]);
+
+  const filteredAssignedToMe = useMemo(() => {
+    const q = (query || "").trim().toLowerCase();
+    if (!q) return tasks;
+    return (tasks || []).filter((t) => {
+      const title = String(t.title || "").toLowerCase();
+      const desc = String(t.description || "").toLowerCase();
+      const assigner = String(profileMap[t.created_by] || "").toLowerCase();
+      return title.includes(q) || desc.includes(q) || assigner.includes(q);
+    });
+  }, [tasks, query, profileMap]);
+
+  const filteredAssignedByMe = useMemo(() => {
+    const q = (query || "").trim().toLowerCase();
+    if (!q) return assignedByMe;
+    return (assignedByMe || []).filter((t) => {
+      const title = String(t.title || "").toLowerCase();
+      const desc = String(t.description || "").toLowerCase();
+      const assignee = String(profileMap[t.assignee_id] || "").toLowerCase();
+      return title.includes(q) || desc.includes(q) || assignee.includes(q);
+    });
+  }, [assignedByMe, query, profileMap]);
 
   const createTask = async () => {
     if (!userId || !createForm.title.trim()) return;
@@ -84,13 +203,6 @@ export default function GeneralTasksPage() {
     setCreateForm({ title: "", description: "", due_at: "", assignee_id: "" });
     setCreateFiles([]);
     await loadAll();
-  };
-
-  const toIsoInputValue = (d) => {
-    if (!d) return "";
-    const x = d instanceof Date ? d : new Date(d);
-    const off = x.getTimezoneOffset();
-    return new Date(x.getTime() - off * 60000).toISOString().slice(0, 16);
   };
 
   const openEdit = (t) => {
@@ -198,6 +310,64 @@ export default function GeneralTasksPage() {
       </div>
 
       <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            {[
+              { key: "today", label: "Today" },
+              { key: "yesterday", label: "Yesterday" },
+              { key: "this_week", label: "This Week" },
+              { key: "last_week", label: "Last Week" },
+              { key: "custom", label: "Custom" },
+            ].map((i) => (
+              <button
+                key={i.key}
+                className={
+                  "rounded-md border border-black/10 bg-white px-3 py-2 text-sm hover:bg-blue-600 hover:text-white" +
+                  (preset === i.key ? " bg-blue-600 text-white" : "")
+                }
+                onClick={() => changePreset(i.key)}
+              >
+                {i.label}
+              </button>
+            ))}
+            {preset === "custom" && (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="datetime-local"
+                  className="rounded-md border border-black/10 px-2 py-2 text-sm"
+                  value={customFrom}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                />
+                <span className="text-sm text-black/60">to</span>
+                <input
+                  type="datetime-local"
+                  className="rounded-md border border-black/10 px-2 py-2 text-sm"
+                  value={customTo}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                />
+                <button
+                  className="rounded-md bg-heading px-3 py-2 text-sm text-background hover:bg-hover disabled:opacity-50"
+                  disabled={!customFrom || !customTo}
+                  onClick={applyCustom}
+                >
+                  Apply
+                </button>
+              </div>
+            )}
+          </div>
+          <input
+            className="rounded-md border border-black/10 px-3 py-2 text-sm"
+            placeholder="Search by user name..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <div className="mt-2 text-xs text-black/60">
+          Filter by created date • {bounds.from ? bounds.from.slice(0, 10) : "-"} → {bounds.to ? bounds.to.slice(0, 10) : "-"}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold text-heading">Create Task</div>
         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
           <input className="rounded-md border border-black/10 px-2 py-2" placeholder="Title" value={createForm.title} onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))} />
@@ -226,7 +396,7 @@ export default function GeneralTasksPage() {
       <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold text-heading">Assigned To Me</div>
         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {tasks.map((t) => {
+          {filteredAssignedToMe.map((t) => {
             const assigner = profiles.find((p) => p.user_id === t.created_by);
             const attachmentsCount = (taskDocs[t.id] || []).length;
             const statusLabel =
@@ -266,14 +436,14 @@ export default function GeneralTasksPage() {
               </Link>
             );
           })}
-          {tasks.length === 0 && <div className="text-sm text-black/60">No tasks assigned.</div>}
+          {filteredAssignedToMe.length === 0 && <div className="text-sm text-black/60">No tasks assigned.</div>}
         </div>
       </div>
 
       <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold text-heading">Assigned By Me</div>
         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {assignedByMe.map((t) => {
+          {filteredAssignedByMe.map((t) => {
             const assignee = profiles.find((p) => p.user_id === t.assignee_id);
             const attachmentsCount = (taskDocs[t.id] || []).length;
             const statusLabel =
@@ -335,7 +505,7 @@ export default function GeneralTasksPage() {
               </Link>
             );
           })}
-          {assignedByMe.length === 0 && <div className="text-sm text-black/60">No tasks assigned by you.</div>}
+          {filteredAssignedByMe.length === 0 && <div className="text-sm text-black/60">No tasks assigned by you.</div>}
         </div>
       </div>
 
