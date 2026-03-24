@@ -51,10 +51,11 @@ export default function GeneralTasksPage() {
   const createTask = async () => {
     if (!userId || !createForm.title.trim()) return;
     setError("");
+    const due = createForm.due_at ? new Date(createForm.due_at).toISOString() : null;
     const payload = {
       title: createForm.title.trim(),
       description: createForm.description?.trim() || null,
-      due_at: createForm.due_at || null,
+      due_at: due,
       status: "open",
       assignee_id: createForm.assignee_id || userId,
       created_by: userId,
@@ -115,12 +116,14 @@ export default function GeneralTasksPage() {
     if (!editForm.title.trim()) return;
     setError("");
     setSavingEdit(true);
+    const due = editForm.due_at ? new Date(editForm.due_at).toISOString() : null;
     const payload = {
       title: editForm.title.trim(),
       description: editForm.description?.trim() || null,
-      due_at: editForm.due_at || null,
+      due_at: due,
       status: editForm.status || "open",
       assignee_id: editForm.assignee_id || null,
+      updated_at: new Date().toISOString(),
     };
     const { data: updated, error: uErr } = await supabase
       .from("tasks")
