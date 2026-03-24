@@ -160,8 +160,16 @@ export default function GeneralTaskDetailPage() {
     return !!task && task.status !== "in_progress" && task.status !== "completed" && task.status !== "cancelled" && task.assignee_id === userId;
   }, [task, userId]);
 
+  const canAddRevision = useMemo(() => {
+    return !!task && !!userId && task.created_by === userId;
+  }, [task, userId]);
+
   const createRevision = async () => {
     if (!id || !userId || !task || !revisionForm.title.trim()) return;
+    if (!canAddRevision) {
+      setError("Only the task assigner can add revisions.");
+      return;
+    }
     setError("");
     setSavingRevision(true);
     const due = revisionForm.due_at ? new Date(revisionForm.due_at).toISOString() : null;
@@ -388,43 +396,49 @@ export default function GeneralTaskDetailPage() {
 
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-heading">Revisions</div>
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <input
-                className="rounded-md border border-black/10 px-2 py-2"
-                placeholder="Revision title"
-                value={revisionForm.title}
-                onChange={(e) => setRevisionForm((f) => ({ ...f, title: e.target.value }))}
-              />
-              <input
-                type="datetime-local"
-                className="rounded-md border border-black/10 px-2 py-2"
-                value={revisionForm.due_at}
-                onChange={(e) => setRevisionForm((f) => ({ ...f, due_at: e.target.value }))}
-              />
-              <textarea
-                className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
-                rows={3}
-                placeholder="Revision details"
-                value={revisionForm.description}
-                onChange={(e) => setRevisionForm((f) => ({ ...f, description: e.target.value }))}
-              />
-              <input
-                className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
-                type="file"
-                accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
-                multiple
-                onChange={(e) => setRevisionFiles(Array.from(e.target.files || []))}
-              />
-            </div>
-            <div className="mt-2">
-              <button
-                className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
-                disabled={savingRevision || !revisionForm.title.trim()}
-                onClick={createRevision}
-              >
-                Add Revision
-              </button>
-            </div>
+            {canAddRevision ? (
+              <>
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <input
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    placeholder="Revision title"
+                    value={revisionForm.title}
+                    onChange={(e) => setRevisionForm((f) => ({ ...f, title: e.target.value }))}
+                  />
+                  <input
+                    type="datetime-local"
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    value={revisionForm.due_at}
+                    onChange={(e) => setRevisionForm((f) => ({ ...f, due_at: e.target.value }))}
+                  />
+                  <textarea
+                    className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                    rows={3}
+                    placeholder="Revision details"
+                    value={revisionForm.description}
+                    onChange={(e) => setRevisionForm((f) => ({ ...f, description: e.target.value }))}
+                  />
+                  <input
+                    className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
+                    multiple
+                    onChange={(e) => setRevisionFiles(Array.from(e.target.files || []))}
+                  />
+                </div>
+                <div className="mt-2">
+                  <button
+                    className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
+                    disabled={savingRevision || !revisionForm.title.trim()}
+                    onClick={createRevision}
+                  >
+                    Add Revision
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="mt-2 text-sm text-black/60">Only the task assigner can add revisions for this task.</div>
+            )}
             <div className="mt-4 space-y-3">
               {revisions.map((r) => {
                 const files = revisionDocs[r.id] || [];
