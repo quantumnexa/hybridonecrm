@@ -324,8 +324,10 @@ export default function AdminAttendancePage() {
                 <button
                   key={i.key}
                   className={
-                    "rounded-md border border-black/10 bg-white px-3 py-2 text-sm hover:bg-blue-600 hover:text-white" +
-                    (preset === i.key ? " bg-blue-600 text-white" : "")
+                    "rounded-md border px-3 py-2 text-sm " +
+                    (preset === i.key
+                      ? "border-blue-600 bg-blue-600 text-white"
+                      : "border-black/10 bg-white text-black/70 hover:bg-black/5")
                   }
                   onClick={() => (i.key === "custom" ? setPreset("custom") : changePreset(i.key))}
                 >
