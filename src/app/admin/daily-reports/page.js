@@ -133,7 +133,7 @@ export default function Page() {
     const fromKey = localDateKey(new Date(bounds.from));
     const toKey = localDateKey(new Date(new Date(bounds.to).getTime() - 1));
     let drQ = supabase.from("daily_reports").select("*").gte("report_date", fromKey).lte("report_date", toKey);
-    if (wantsOrg) drQ = drQ.eq("org_id", orgId);
+    if (wantsOrg) drQ = drQ.or(`org_id.is.null,org_id.eq.${orgId}`);
     if (ids.length) drQ = drQ.in("user_id", ids);
     const { data: dr, error: dErr } = await drQ.order("report_date", { ascending: false });
     if (dErr) {

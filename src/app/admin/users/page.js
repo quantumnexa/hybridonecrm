@@ -203,6 +203,23 @@ export default function Page() {
                       ) : (
                         <button className="rounded-md border border-black/10 px-2 py-1 hover:bg-black/5" onClick={() => disableUser(u.id)}>Disable User</button>
                       )}
+                      <button
+                        className="rounded-md border border-red-300 bg-red-50 px-2 py-1 text-red-700 hover:bg-red-100"
+                        onClick={async () => {
+                          const ok = typeof window !== "undefined" ? window.confirm("Permanently delete this user? This cannot be undone.") : false;
+                          if (!ok) return;
+                          setError("");
+                          const res = await fetch(`/api/admin-users/${u.id}`, { method: "DELETE" });
+                          if (!res.ok) {
+                            const j = await res.json().catch(() => ({}));
+                            setError(j.error || "Failed to delete user");
+                            return;
+                          }
+                          await fetchUsers();
+                        }}
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
                 </div>
