@@ -12,8 +12,8 @@ export default function AdminTaskDetailPage() {
   const [task, setTask] = useState(null);
   const [docs, setDocs] = useState([]);
   const [updates, setUpdates] = useState([]);
-  const [revisions, setRevisions] = useState([]);
-  const [revisionDocs, setRevisionDocs] = useState({});
+  const [revisionTasks, setRevisionTasks] = useState([]);
+  const [revisionTaskDocsCount, setRevisionTaskDocsCount] = useState({});
   const [users, setUsers] = useState([]);
   const [profileMap, setProfileMap] = useState({});
   const [userId, setUserId] = useState(null);
@@ -65,26 +65,22 @@ export default function AdminTaskDetailPage() {
       .order("created_at", { ascending: false });
     setUpdates(uRes || []);
 
-    const { data: revs } = await supabase
-      .from("task_revisions")
-      .select("*")
-      .eq("task_id", id)
+    const { data: revTasks } = await supabase
+      .from("tasks")
+      .select("id,title,description,due_at,status,assignee_id,created_by,created_at,parent_task_id")
+      .eq("parent_task_id", id)
       .order("created_at", { ascending: false });
-    setRevisions(revs || []);
-    const revIds = (revs || []).map((r) => r.id);
-    if (revIds.length) {
-      const { data: rDocs } = await supabase
-        .from("task_revision_documents")
-        .select("*")
-        .in("revision_id", revIds)
-        .order("created_at", { ascending: false });
-      const grouped = (rDocs || []).reduce((acc, d) => {
-        (acc[d.revision_id] ||= []).push(d);
+    setRevisionTasks(revTasks || []);
+    const revTaskIds = (revTasks || []).map((x) => x.id);
+    if (revTaskIds.length) {
+      const { data: revTaskDocs } = await supabase.from("task_documents").select("id,task_id").in("task_id", revTaskIds);
+      const counts = (revTaskDocs || []).reduce((acc, d2) => {
+        acc[d2.task_id] = (acc[d2.task_id] || 0) + 1;
         return acc;
       }, {});
-      setRevisionDocs(grouped);
+      setRevisionTaskDocsCount(counts);
     } else {
-      setRevisionDocs({});
+      setRevisionTaskDocsCount({});
     }
 
     const { data: usersRes } = await supabase
@@ -232,7 +228,8 @@ export default function AdminTaskDetailPage() {
     setSavingRevision(true);
     const due = revisionForm.due_at ? new Date(revisionForm.due_at).toISOString() : null;
     const payload = {
-      task_id: id,
+      org_id: task.org_id || null,
+      parent_task_id: id,
       title: revisionForm.title.trim(),
       description: revisionForm.description?.trim() ? revisionForm.description.trim() : null,
       due_at: due,
@@ -240,7 +237,7 @@ export default function AdminTaskDetailPage() {
       assignee_id: task.assignee_id || null,
       created_by: userId,
     };
-    const { data: rev, error: rErr } = await supabase.from("task_revisions").insert(payload).select("*").single();
+    const { data: rev, error: rErr } = await supabase.from("tasks").insert(payload).select("*").single();
     if (rErr) {
       setError(rErr.message || "Failed to create revision");
       setSavingRevision(false);
@@ -250,7 +247,7 @@ export default function AdminTaskDetailPage() {
     if (rev?.id && revisionFiles.length) {
       const bucket = "project-docs";
       for (const file of revisionFiles) {
-        const path = `task_revisions/${id}/${rev.id}/${Date.now()}_${file.name}`;
+        const path = `tasks/${rev.id}/${Date.now()}_${file.name}`;
         const up = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
         if (up.error) {
           setError(up.error.message || "Failed to upload file");
@@ -259,10 +256,18 @@ export default function AdminTaskDetailPage() {
         const pub = supabase.storage.from(bucket).getPublicUrl(path);
         const url = pub?.data?.publicUrl || null;
         if (url) {
-          await supabase.from("task_revision_documents").insert({ revision_id: rev.id, uploaded_by: userId, filename: file.name, url });
+          await supabase.from("task_documents").insert({ task_id: rev.id, uploaded_by: userId, filename: file.name, url });
         }
       }
     }
+
+    await supabase.from("tasks").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", id);
+    await supabase.from("task_updates").insert({
+      task_id: id,
+      author_id: userId,
+      state: "completed",
+      note: `Revision created: ${rev.title}`,
+    });
 
     setRevisionForm({ title: "", description: "", due_at: "" });
     setRevisionFiles([]);
@@ -347,6 +352,18 @@ export default function AdminTaskDetailPage() {
                   <div>
                     <div className="text-xs text-black/60">Due</div>
                     <div className="font-semibold">{task.due_at ? new Date(task.due_at).toLocaleString() : "-"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-black/60">Parent Task</div>
+                    <div className="font-semibold">
+                      {task.parent_task_id ? (
+                        <Link href={`/admin/tasks/${task.parent_task_id}`} className="hover:underline">
+                          {task.parent_task_id}
+                        </Link>
+                      ) : (
+                        "-"
+                      )}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-black/60">Assignee</div>
@@ -456,8 +473,7 @@ export default function AdminTaskDetailPage() {
                 </button>
               </div>
               <div className="mt-4 space-y-3">
-                {revisions.map((r) => {
-                  const files = revisionDocs[r.id] || [];
+                {revisionTasks.map((r) => {
                   const rStatus =
                     r.status === "in_progress"
                       ? "In Progress"
@@ -470,28 +486,24 @@ export default function AdminTaskDetailPage() {
                     <div key={r.id} className="rounded-md border border-black/10 p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="font-semibold text-heading">{r.title}</div>
+                          <Link href={`/admin/tasks/${r.id}`} className="font-semibold text-heading hover:underline">
+                            {r.title}
+                          </Link>
                           <div className="text-xs text-black/60">
                             {rStatus}
                             {r.due_at ? ` • Due ${new Date(r.due_at).toLocaleString()}` : ""}
                             {r.created_by ? ` • By ${profileMap[r.created_by] || "Unknown"}` : ""}
+                            {" • "}
+                            {revisionTaskDocsCount[r.id] ? `${revisionTaskDocsCount[r.id]} files` : "0 files"}
                           </div>
                         </div>
                         <div className="text-xs text-black/60">{r.created_at ? new Date(r.created_at).toLocaleString() : ""}</div>
                       </div>
                       {r.description ? <div className="mt-2 whitespace-pre-wrap text-sm">{r.description}</div> : null}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {files.map((d) => (
-                          <a key={d.id} href={d.url} target="_blank" rel="noreferrer" className="rounded-md border border-black/10 px-2 py-1 text-xs hover:bg-black/5">
-                            {d.filename}
-                          </a>
-                        ))}
-                        {files.length === 0 && <div className="text-xs text-black/60">No files</div>}
-                      </div>
                     </div>
                   );
                 })}
-                {revisions.length === 0 && <div className="text-sm text-black/60">No revisions yet.</div>}
+                {revisionTasks.length === 0 && <div className="text-sm text-black/60">No revisions yet.</div>}
               </div>
             </div>
 

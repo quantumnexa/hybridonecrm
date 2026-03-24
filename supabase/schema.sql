@@ -155,6 +155,7 @@ create index if not exists quotes_status_idx on public.quotes(status);
 create table if not exists public.tasks (
   id uuid primary key default gen_random_uuid(),
   org_id uuid references public.organizations(id) on delete cascade,
+  parent_task_id uuid references public.tasks(id) on delete set null,
   title text not null,
   description text,
   due_at timestamptz,
@@ -169,6 +170,7 @@ create index if not exists tasks_org_id_idx on public.tasks(org_id);
 create index if not exists tasks_assignee_idx on public.tasks(assignee_id);
 create index if not exists tasks_status_idx on public.tasks(status);
 create index if not exists tasks_due_idx on public.tasks(due_at);
+create index if not exists tasks_parent_task_id_idx on public.tasks(parent_task_id);
 
 -- Task updates (assignee responses / daily updates against tasks)
 create table if not exists public.task_updates (
