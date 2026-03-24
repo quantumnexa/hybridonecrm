@@ -205,6 +205,33 @@ create table if not exists public.task_documents (
 alter table public.task_documents disable row level security;
 create index if not exists task_documents_task_id_idx on public.task_documents(task_id);
 
+create table if not exists public.task_revisions (
+  id uuid primary key default gen_random_uuid(),
+  task_id uuid references public.tasks(id) on delete cascade,
+  title text not null,
+  description text,
+  due_at timestamptz,
+  status text check (status in ('open','in_progress','completed','cancelled')) default 'open',
+  assignee_id uuid references auth.users(id) on delete set null,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz default now()
+);
+alter table public.task_revisions disable row level security;
+create index if not exists task_revisions_task_id_idx on public.task_revisions(task_id);
+create index if not exists task_revisions_assignee_idx on public.task_revisions(assignee_id);
+create index if not exists task_revisions_due_idx on public.task_revisions(due_at);
+
+create table if not exists public.task_revision_documents (
+  id uuid primary key default gen_random_uuid(),
+  revision_id uuid references public.task_revisions(id) on delete cascade,
+  uploaded_by uuid references auth.users(id) on delete set null,
+  filename text not null,
+  url text not null,
+  created_at timestamptz default now()
+);
+alter table public.task_revision_documents disable row level security;
+create index if not exists task_revision_documents_revision_id_idx on public.task_revision_documents(revision_id);
+
 -- Work sessions (daily login/logout tracking)
 create table if not exists public.work_sessions (
   id uuid primary key default gen_random_uuid(),
