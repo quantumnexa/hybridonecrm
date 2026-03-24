@@ -222,10 +222,38 @@ create index if not exists work_sessions_user_date_idx on public.work_sessions(u
 create index if not exists work_sessions_date_idx on public.work_sessions(work_date);
 create index if not exists work_sessions_org_idx on public.work_sessions(org_id);
 
+-- Daily reports (end-of-day logs by general users)
+create table if not exists public.daily_reports (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete set null,
+  user_id uuid references auth.users(id) on delete cascade,
+  report_date date not null,
+  content text not null,
+  created_at timestamptz default now()
+);
+alter table public.daily_reports disable row level security;
+create index if not exists daily_reports_user_date_idx on public.daily_reports(user_id, report_date);
+create index if not exists daily_reports_date_idx on public.daily_reports(report_date);
+create index if not exists daily_reports_org_idx on public.daily_reports(org_id);
+
+create table if not exists public.daily_report_documents (
+  id uuid primary key default gen_random_uuid(),
+  report_id uuid references public.daily_reports(id) on delete cascade,
+  uploaded_by uuid references auth.users(id) on delete set null,
+  filename text not null,
+  url text not null,
+  created_at timestamptz default now()
+);
+alter table public.daily_report_documents disable row level security;
+create index if not exists daily_report_documents_report_id_idx on public.daily_report_documents(report_id);
+
 -- Enable RLS and restrict access:
 -- - Employees can only see/insert/update their own rows
 -- - Super Admin can see all rows
 alter table public.work_sessions enable row level security;
+
+alter table public.daily_reports enable row level security;
+alter table public.daily_report_documents enable row level security;
 
 drop policy if exists "work_sessions_select_own_or_admin" on public.work_sessions;
 create policy "work_sessions_select_own_or_admin"
@@ -255,5 +283,76 @@ using (
 )
 with check (
   user_id = auth.uid()
+  or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
+);
+
+drop policy if exists "daily_reports_select_own_or_admin" on public.daily_reports;
+create policy "daily_reports_select_own_or_admin"
+on public.daily_reports
+for select
+to authenticated
+using (
+  user_id = auth.uid()
+  or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
+);
+
+drop policy if exists "daily_reports_insert_own" on public.daily_reports;
+create policy "daily_reports_insert_own"
+on public.daily_reports
+for insert
+to authenticated
+with check (user_id = auth.uid());
+
+drop policy if exists "daily_reports_update_own_or_admin" on public.daily_reports;
+create policy "daily_reports_update_own_or_admin"
+on public.daily_reports
+for update
+to authenticated
+using (
+  user_id = auth.uid()
+  or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
+)
+with check (
+  user_id = auth.uid()
+  or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
+);
+
+drop policy if exists "daily_reports_delete_own_or_admin" on public.daily_reports;
+create policy "daily_reports_delete_own_or_admin"
+on public.daily_reports
+for delete
+to authenticated
+using (
+  user_id = auth.uid()
+  or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
+);
+
+drop policy if exists "daily_report_docs_select_own_or_admin" on public.daily_report_documents;
+create policy "daily_report_docs_select_own_or_admin"
+on public.daily_report_documents
+for select
+to authenticated
+using (
+  exists (select 1 from public.daily_reports r where r.id = report_id and r.user_id = auth.uid())
+  or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
+);
+
+drop policy if exists "daily_report_docs_insert_own" on public.daily_report_documents;
+create policy "daily_report_docs_insert_own"
+on public.daily_report_documents
+for insert
+to authenticated
+with check (
+  uploaded_by = auth.uid()
+  and exists (select 1 from public.daily_reports r where r.id = report_id and r.user_id = auth.uid())
+);
+
+drop policy if exists "daily_report_docs_delete_own_or_admin" on public.daily_report_documents;
+create policy "daily_report_docs_delete_own_or_admin"
+on public.daily_report_documents
+for delete
+to authenticated
+using (
+  exists (select 1 from public.daily_reports r where r.id = report_id and r.user_id = auth.uid())
   or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
 );

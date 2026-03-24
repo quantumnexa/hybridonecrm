@@ -1,15 +1,40 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const normalizeEnv = (v) => {
+  if (typeof v !== "string") return "";
+  const t = v.trim();
+  return t.replace(/^['"`]+|['"`]+$/g, "").trim();
+};
 
-export const supabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
+const rawSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const rawSupabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+const supabaseUrl = normalizeEnv(rawSupabaseUrl);
+const supabaseAnonKey = normalizeEnv(rawSupabaseAnonKey);
+
+const isValidSupabaseUrl = (() => {
+  if (!supabaseUrl) return false;
+  try {
+    const u = new URL(supabaseUrl);
+    return u.protocol === "https:" || u.protocol === "http:";
+  } catch {
+    return false;
+  }
+})();
+
+const supabaseConfigError = (() => {
+  if (!supabaseUrl && !supabaseAnonKey) return "Missing NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.";
+  if (!supabaseUrl) return "Missing NEXT_PUBLIC_SUPABASE_URL.";
+  if (!supabaseAnonKey) return "Missing NEXT_PUBLIC_SUPABASE_ANON_KEY.";
+  if (!isValidSupabaseUrl) return "Invalid NEXT_PUBLIC_SUPABASE_URL.";
+  return "";
+})();
+
+export const supabaseConfigured = !supabaseConfigError;
 
 const fetchWithConfigGuard = async (...args) => {
   if (!supabaseConfigured) {
-    throw new Error(
-      "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
-    );
+    throw new Error(`Supabase is not configured. ${supabaseConfigError}`);
   }
   return fetch(...args);
 };

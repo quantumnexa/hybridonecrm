@@ -17,7 +17,7 @@ export default function AdminLayout({ children }) {
             { href: "/admin/users", label: "User management", icon: "users" },
             { href: "/admin/attendance", label: "Attendance", icon: "reports" },
             { href: "/admin/reports", label: "Reports & Analytics", icon: "reports" },
-            { href: "/admin/settings", label: "System setting", icon: "settings" },
+            { href: "/admin/daily-reports", label: "Daily Reports", icon: "tasks" },
           ]}
         />
         <main className="flex-1 h-full overflow-y-auto px-6 py-6">{children}</main>
@@ -25,4 +25,3 @@ export default function AdminLayout({ children }) {
     </AuthGuard>
   );
 }
-

@@ -11,6 +11,7 @@ export default function GeneralLayout({ children }) {
             { href: "/general", label: "Tasks", icon: "tasks" },
             { href: "/general/notes", label: "My Notes", icon: "profile" },
             { href: "/general/profile", label: "Profile", icon: "profile" },
+            { href: "/general/daily-reports", label: "Daily Reports", icon: "tasks" },
           ]}
         />
         <main className="flex-1 h-full overflow-y-auto px-6 py-6">{children}</main>
