@@ -13,6 +13,10 @@ export default function GeneralTasksPage() {
   const [taskDocs, setTaskDocs] = useState({});
   const [createForm, setCreateForm] = useState({ title: "", description: "", due_at: "", assignee_id: "" });
   const [createFiles, setCreateFiles] = useState([]);
+  const [editingTask, setEditingTask] = useState(null);
+  const [editForm, setEditForm] = useState({ title: "", description: "", due_at: "", assignee_id: "", status: "open" });
+  const [editFiles, setEditFiles] = useState([]);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const loadAll = useCallback(async () => {
     setError("");
@@ -78,6 +82,108 @@ export default function GeneralTasksPage() {
     }
     setCreateForm({ title: "", description: "", due_at: "", assignee_id: "" });
     setCreateFiles([]);
+    await loadAll();
+  };
+
+  const toIsoInputValue = (d) => {
+    if (!d) return "";
+    const x = d instanceof Date ? d : new Date(d);
+    const off = x.getTimezoneOffset();
+    return new Date(x.getTime() - off * 60000).toISOString().slice(0, 16);
+  };
+
+  const openEdit = (t) => {
+    setError("");
+    setEditingTask(t);
+    setEditFiles([]);
+    setEditForm({
+      title: t.title || "",
+      description: t.description || "",
+      due_at: t.due_at ? toIsoInputValue(t.due_at) : "",
+      assignee_id: t.assignee_id || "",
+      status: t.status || "open",
+    });
+  };
+
+  const closeEdit = () => {
+    setEditingTask(null);
+    setEditFiles([]);
+  };
+
+  const saveEdit = async () => {
+    if (!userId || !editingTask?.id) return;
+    if (!editForm.title.trim()) return;
+    setError("");
+    setSavingEdit(true);
+    const payload = {
+      title: editForm.title.trim(),
+      description: editForm.description?.trim() || null,
+      due_at: editForm.due_at || null,
+      status: editForm.status || "open",
+      assignee_id: editForm.assignee_id || null,
+    };
+    const { data: updated, error: uErr } = await supabase
+      .from("tasks")
+      .update(payload)
+      .eq("id", editingTask.id)
+      .eq("created_by", userId)
+      .select("*")
+      .single();
+    if (uErr) {
+      setError(uErr.message || "Failed to update task");
+      setSavingEdit(false);
+      return;
+    }
+
+    if (editFiles.length > 0) {
+      const bucket = "project-docs";
+      for (const file of editFiles) {
+        const path = `tasks/${updated.id}/${Date.now()}_${file.name}`;
+        const up = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
+        if (up.error) {
+          setError(up.error.message || "Failed to upload file");
+          continue;
+        }
+        const pub = supabase.storage.from(bucket).getPublicUrl(path);
+        const url = pub?.data?.publicUrl || null;
+        if (url) {
+          await supabase.from("task_documents").insert({ task_id: updated.id, uploaded_by: userId, filename: file.name, url });
+        }
+      }
+    }
+
+    setSavingEdit(false);
+    closeEdit();
+    await loadAll();
+  };
+
+  const deleteTask = async (t) => {
+    if (!userId || !t?.id) return;
+    const ok = typeof window !== "undefined" ? window.confirm("Delete this task permanently?") : false;
+    if (!ok) return;
+    setError("");
+
+    const bucket = "project-docs";
+    const docs = taskDocs[t.id] || [];
+    const prefix = `/storage/v1/object/public/${bucket}/`;
+    const paths = docs
+      .map((d) => {
+        const url = d?.url || "";
+        const idx = url.indexOf(prefix);
+        if (idx < 0) return "";
+        return url.substring(idx + prefix.length);
+      })
+      .filter(Boolean);
+    if (paths.length) {
+      await supabase.storage.from(bucket).remove(paths);
+    }
+    await supabase.from("task_documents").delete().eq("task_id", t.id);
+
+    const { error: dErr } = await supabase.from("tasks").delete().eq("id", t.id).eq("created_by", userId);
+    if (dErr) {
+      setError(dErr.message || "Failed to delete task");
+      return;
+    }
     await loadAll();
   };
 
@@ -201,12 +307,112 @@ export default function GeneralTasksPage() {
                     <div className="text-black/60">No description.</div>
                   )}
                 </div>
+                <div className="mt-3 flex items-center justify-end gap-2">
+                  <button
+                    className="rounded-md border border-black/10 px-3 py-1 text-sm hover:bg-black/5"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      openEdit(t);
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="rounded-md border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700 hover:bg-red-100"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      deleteTask(t);
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
               </Link>
             );
           })}
           {assignedByMe.length === 0 && <div className="text-sm text-black/60">No tasks assigned by you.</div>}
         </div>
       </div>
+
+      {editingTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="text-sm font-semibold text-heading">Edit Task</div>
+              <button className="rounded-md border border-black/10 px-3 py-1 hover:bg-black/5" onClick={closeEdit}>
+                Close
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  placeholder="Title"
+                  value={editForm.title}
+                  onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                />
+                <select
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={editForm.status}
+                  onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
+                >
+                  <option value="open">Open</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <input
+                  type="datetime-local"
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={editForm.due_at}
+                  onChange={(e) => setEditForm((f) => ({ ...f, due_at: e.target.value }))}
+                />
+                <select
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={editForm.assignee_id || ""}
+                  onChange={(e) => setEditForm((f) => ({ ...f, assignee_id: e.target.value }))}
+                >
+                  <option value="">Unassigned</option>
+                  {generalProfiles.map((p) => (
+                    <option key={p.user_id} value={p.user_id}>
+                      {p.display_name || p.user_id}
+                    </option>
+                  ))}
+                </select>
+                <textarea
+                  className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                  rows={3}
+                  placeholder="Description"
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                />
+                <input
+                  className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
+                  multiple
+                  onChange={(e) => setEditFiles(Array.from(e.target.files || []))}
+                />
+              </div>
+              {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+              <div className="flex justify-end gap-2">
+                <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={closeEdit} disabled={savingEdit}>
+                  Cancel
+                </button>
+                <button
+                  className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
+                  onClick={saveEdit}
+                  disabled={savingEdit || !editForm.title.trim()}
+                >
+                  {savingEdit ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

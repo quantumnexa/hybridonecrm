@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
+import { formatMinutesAsHHMM } from "@/lib/timeFormat";
 
 function localDateKey(d) {
   const x = d instanceof Date ? d : new Date(d);
@@ -246,11 +247,11 @@ export default function AdminAttendancePage() {
   }, [profiles, sessions, showPresentOnly, rangeInfo.from, rangeInfo.to, rangeInfo.days]);
 
   const presentNowCount = useMemo(() => rows.filter((r) => r.present).length, [rows]);
-  const totalHours = useMemo(() => rows.reduce((sum, r) => sum + Number(r.minutes || 0), 0) / 60, [rows]);
+  const totalMinutes = useMemo(() => rows.reduce((sum, r) => sum + Number(r.minutes || 0), 0), [rows]);
   const totalEmployees = useMemo(() => rows.length, [rows]);
   const totalPresentDays = useMemo(() => rows.reduce((sum, r) => sum + Number(r.presentDays || 0), 0), [rows]);
   const totalAbsentDays = useMemo(() => rows.reduce((sum, r) => sum + Number(r.absentDays || 0), 0), [rows]);
-  const avgHours = useMemo(() => (totalEmployees ? totalHours / totalEmployees : 0), [totalEmployees, totalHours]);
+  const avgMinutes = useMemo(() => (totalEmployees ? Math.floor(totalMinutes / totalEmployees) : 0), [totalEmployees, totalMinutes]);
 
   const filteredRows = useMemo(() => {
     const q = (query || "").trim().toLowerCase();
@@ -295,8 +296,8 @@ export default function AdminAttendancePage() {
           </div>
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
             <div className="text-xs text-black/60">Hours Worked</div>
-            <div className="mt-2 text-2xl font-semibold text-heading">{totalHours.toFixed(2)}</div>
-            <div className="mt-1 text-xs text-black/60">avg {avgHours.toFixed(2)} / employee</div>
+            <div className="mt-2 text-2xl font-semibold text-heading">{formatMinutesAsHHMM(totalMinutes)}</div>
+            <div className="mt-1 text-xs text-black/60">avg {formatMinutesAsHHMM(avgMinutes)} / employee</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
             <div className="text-xs text-black/60">Present Days</div>
@@ -416,7 +417,7 @@ export default function AdminAttendancePage() {
                       <td className="px-4 py-3 text-right tabular-nums">{r.absentDays}</td>
                       <td className="px-4 py-3">{r.firstIn ? r.firstIn.toLocaleString() : "-"}</td>
                       <td className="px-4 py-3">{r.lastOut ? r.lastOut.toLocaleString() : "-"}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{(Number(r.minutes || 0) / 60).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{formatMinutesAsHHMM(r.minutes)}</td>
                       <td className="px-4 py-3 text-right">
                         <Link href={`/admin/users/${r.user_id}`} className="rounded-md border border-black/10 px-3 py-1 hover:bg-black/5">
                           View

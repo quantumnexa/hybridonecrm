@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
+import { formatMinutesAsHHMM } from "@/lib/timeFormat";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -330,8 +331,8 @@ export default function Page() {
     return total ? Math.round((done / total) * 100) : 0;
   }, [tasks.length, taskCounts.completed]);
 
-  const totalWorkHours = useMemo(() => {
-    return (workSessions || []).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0) / 60;
+  const totalWorkMinutes = useMemo(() => {
+    return (workSessions || []).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
   }, [workSessions]);
 
   const activeWorkers = useMemo(() => {
@@ -342,9 +343,9 @@ export default function Page() {
     return set.size;
   }, [workSessions]);
 
-  const avgHoursPerWorker = useMemo(() => {
-    return activeWorkers ? totalWorkHours / activeWorkers : 0;
-  }, [activeWorkers, totalWorkHours]);
+  const avgMinutesPerWorker = useMemo(() => {
+    return activeWorkers ? Math.floor(totalWorkMinutes / activeWorkers) : 0;
+  }, [activeWorkers, totalWorkMinutes]);
 
   const websiteLeads = useMemo(() => {
     const buckets = (leads || []).reduce((acc, l) => {
@@ -406,9 +407,9 @@ export default function Page() {
         user_id: r.user_id,
         name: profileMap[r.user_id] || "Unknown",
         presentDays: r.presentDays,
-        hours: (Number(r.minutes || 0) / 60).toFixed(2),
+        minutes: Number(r.minutes || 0),
       }))
-      .sort((a, b) => Number(b.hours) - Number(a.hours))
+      .sort((a, b) => Number(b.minutes) - Number(a.minutes))
       .slice(0, 20);
   }, [workSessions, profileMap]);
 
@@ -488,7 +489,11 @@ export default function Page() {
           />
           <StatCard label="Appointments" value={loading ? "…" : String(appointments.length)} sub={`Done ${appointmentDoneRate}% • Completed ${apptCounts.completed || 0}`} />
           <StatCard label="Tasks" value={loading ? "…" : String(tasks.length)} sub={`Done ${taskDoneRate}% • Completed ${taskCounts.completed || 0}`} />
-          <StatCard label="Work Hours" value={loading ? "…" : totalWorkHours.toFixed(2)} sub={`Workers ${activeWorkers} • Avg ${avgHoursPerWorker.toFixed(2)}`} />
+          <StatCard
+            label="Work Hours"
+            value={loading ? "…" : formatMinutesAsHHMM(totalWorkMinutes)}
+            sub={`Workers ${activeWorkers} • Avg ${formatMinutesAsHHMM(avgMinutesPerWorker)}`}
+          />
           <StatCard label="Work Sessions" value={loading ? "…" : String(workSessions.length)} sub="Rows in range" />
         </div>
 
@@ -559,7 +564,7 @@ export default function Page() {
                     >
                       <td className="px-4 py-3 font-medium text-heading">{r.name}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{r.presentDays}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{r.hours}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{formatMinutesAsHHMM(r.minutes)}</td>
                     </tr>
                   ))}
                   {attendanceSummary.length === 0 && (

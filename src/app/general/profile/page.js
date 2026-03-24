@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, getUserCached } from "@/lib/supabase";
+import { formatMinutesAsHHMM } from "@/lib/timeFormat";
 
 export default function Page() {
   const [userEmail, setUserEmail] = useState("");
@@ -312,7 +313,7 @@ export default function Page() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
           <div className="text-sm font-semibold text-heading">Work Hours (Range)</div>
-          <div className="mt-3 text-3xl font-bold">{(Number(rangeWork.totalMinutes || 0) / 60).toFixed(2)}</div>
+          <div className="mt-3 text-3xl font-bold">{formatMinutesAsHHMM(rangeWork.totalMinutes)}</div>
           <div className="mt-2 text-xs text-black/60">Includes ongoing time if currently logged in</div>
         </div>
         <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
@@ -348,7 +349,7 @@ export default function Page() {
                   <td className="px-3 py-2">{d.date}</td>
                   <td className="px-3 py-2">{d.firstIn ? d.firstIn.toLocaleString() : "-"}</td>
                   <td className="px-3 py-2">{d.lastOut ? d.lastOut.toLocaleString() : "-"}</td>
-                  <td className="px-3 py-2 text-right">{(Number(d.minutes || 0) / 60).toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right">{formatMinutesAsHHMM(d.minutes)}</td>
                 </tr>
               ))}
               {rangeWork.days.length === 0 && (
