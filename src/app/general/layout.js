@@ -9,6 +9,7 @@ export default function GeneralLayout({ children }) {
           title="General"
           items={[
             { href: "/general", label: "Tasks", icon: "tasks" },
+            { href: "/general/notifications", label: "Notifications", icon: "notifications" },
             { href: "/general/notes", label: "My Notes", icon: "profile" },
             { href: "/general/shifts", label: "My Shifts", icon: "appointments" },
             { href: "/general/profile", label: "Profile", icon: "profile" },

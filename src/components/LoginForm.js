@@ -50,6 +50,18 @@ export default function LoginForm() {
         .maybeSingle();
       role = prof?.role || "sales";
     }
+    try {
+      const displayName =
+        typeof user?.user_metadata?.display_name === "string" && user.user_metadata.display_name.trim()
+          ? user.user_metadata.display_name.trim()
+          : undefined;
+      await supabase.from("profiles").upsert({
+        user_id: user.id,
+        role,
+        display_name: displayName,
+      });
+    } catch (_e) {
+    }
     router.push(
       role === "super_admin"
         ? "/admin/dashboard"

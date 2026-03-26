@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import AuthGuard from "@/components/AuthGuard";
-import { supabase, getUserCached } from "@/lib/supabase";
+import { supabase, getUserCached, logActivity, notifyAdmins } from "@/lib/supabase";
 import Link from "next/link";
 import { formatLocalDateTime12 } from "@/lib/timeFormat";
 
@@ -58,10 +58,11 @@ export default function SalesTasksPage() {
   const createTask = async () => {
     if (!userId || !createForm.title.trim()) return;
     setError("");
+    const due = createForm.due_at ? new Date(createForm.due_at).toISOString() : null;
     const payload = {
       title: createForm.title.trim(),
       description: createForm.description?.trim() || null,
-      due_at: createForm.due_at || null,
+      due_at: due,
       status: "open",
       assignee_id: userId,
       created_by: userId,
@@ -71,6 +72,8 @@ export default function SalesTasksPage() {
       setError(err.message || "Failed to create task");
       return;
     }
+    await logActivity({ actorId: userId, action: "task_created", entityType: "task", entityId: data?.id || null, meta: { title: data?.title || null } });
+    await notifyAdmins({ actorId: userId, type: "activity", title: "Task created", message: data?.title || "", entityType: "task", entityId: data?.id || null, url: "/admin/tasks" });
     if (createFiles.length > 0) {
       const bucket = "project-docs";
       for (const file of createFiles) {

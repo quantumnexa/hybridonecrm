@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AuthGuard from "@/components/AuthGuard";
-import { supabase, getUserCached } from "@/lib/supabase";
+import { supabase, getUserCached, logActivity, notifyAdmins, notifyUser, taskUrlForUser } from "@/lib/supabase";
 import Link from "next/link";
 
 export default function AdminTaskDetailPage() {
@@ -145,6 +145,35 @@ export default function AdminTaskDetailPage() {
       setSaving(false);
       return;
     }
+    await logActivity({
+      actorId: userId || null,
+      action: "task_updated",
+      entityType: "task",
+      entityId: id,
+      meta: { title: data?.title || null, status: data?.status || null, due_at: data?.due_at || null, assignee_id: data?.assignee_id || null },
+    });
+    await notifyAdmins({
+      actorId: userId || null,
+      type: "activity",
+      title: "Task updated",
+      message: data?.title || "",
+      entityType: "task",
+      entityId: id,
+      url: `/admin/tasks/${id}`,
+    });
+    if (task?.assignee_id !== data?.assignee_id && data?.assignee_id) {
+      const assigneeUrl = await taskUrlForUser(id, data.assignee_id);
+      await notifyUser({
+        userId: data.assignee_id,
+        actorId: userId || null,
+        type: "task_assigned",
+        title: "Task assigned to you",
+        message: data.title,
+        entityType: "task",
+        entityId: id,
+        url: assigneeUrl,
+      });
+    }
     setTask(data || null);
     setEditMode(false);
     setSaving(false);
@@ -160,6 +189,8 @@ export default function AdminTaskDetailPage() {
       setError(err.message || "Failed to delete task");
       return;
     }
+    await logActivity({ actorId: userId || null, action: "task_deleted", entityType: "task", entityId: id, meta: { title: task?.title || null } });
+    await notifyAdmins({ actorId: userId || null, type: "activity", title: "Task deleted", message: task?.title || "", entityType: "task", entityId: id, url: "/admin/tasks" });
     router.push("/admin/tasks");
   };
 
@@ -168,6 +199,7 @@ export default function AdminTaskDetailPage() {
     setError("");
     setUploading(true);
     const bucket = "project-docs";
+    let uploadedCount = 0;
     for (const file of uploadFiles) {
       const path = `tasks/${id}/${Date.now()}_${file.name}`;
       const up = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
@@ -183,11 +215,18 @@ export default function AdminTaskDetailPage() {
           .insert({ task_id: id, uploaded_by: userId || null, filename: file.name, url })
           .select("*")
           .single();
-        if (!insErr && ins) setDocs((prev) => [ins, ...prev]);
+        if (!insErr && ins) {
+          uploadedCount += 1;
+          setDocs((prev) => [ins, ...prev]);
+        }
       }
     }
     setUploadFiles([]);
     setUploading(false);
+    if (uploadedCount > 0) {
+      await logActivity({ actorId: userId || null, action: "task_documents_uploaded", entityType: "task", entityId: id, meta: { count: uploadedCount } });
+      await notifyAdmins({ actorId: userId || null, type: "activity", title: "Task attachments uploaded", message: task?.title || "", entityType: "task", entityId: id, url: `/admin/tasks/${id}` });
+    }
   };
 
   const renameDoc = async (doc) => {
@@ -204,6 +243,8 @@ export default function AdminTaskDetailPage() {
       setError(err.message || "Failed to rename document");
       return;
     }
+    await logActivity({ actorId: userId || null, action: "task_document_renamed", entityType: "task_document", entityId: doc.id, meta: { filename: newName.trim() } });
+    await notifyAdmins({ actorId: userId || null, type: "activity", title: "Task attachment renamed", message: newName.trim(), entityType: "task_document", entityId: doc.id, url: `/admin/tasks/${id}` });
     if (data) setDocs((prev) => prev.map((d) => (d.id === doc.id ? data : d)));
   };
 
@@ -219,6 +260,8 @@ export default function AdminTaskDetailPage() {
       setError(delErr.message || "Failed to delete document");
       return;
     }
+    await logActivity({ actorId: userId || null, action: "task_document_deleted", entityType: "task_document", entityId: doc.id, meta: { filename: doc.filename || null } });
+    await notifyAdmins({ actorId: userId || null, type: "activity", title: "Task attachment deleted", message: doc.filename || "", entityType: "task_document", entityId: doc.id, url: `/admin/tasks/${id}` });
     setDocs((prev) => prev.filter((d) => d.id !== doc.id));
   };
 
@@ -242,6 +285,35 @@ export default function AdminTaskDetailPage() {
       setError(rErr.message || "Failed to create revision");
       setSavingRevision(false);
       return;
+    }
+    await logActivity({
+      actorId: userId || null,
+      action: "task_revision_created",
+      entityType: "task",
+      entityId: rev?.id || null,
+      meta: { parent_task_id: id, title: rev?.title || null, due_at: rev?.due_at || null },
+    });
+    await notifyAdmins({
+      actorId: userId || null,
+      type: "activity",
+      title: "Task revision created",
+      message: rev?.title || "",
+      entityType: "task",
+      entityId: rev?.id || null,
+      url: `/admin/tasks/${id}`,
+    });
+    if (rev?.assignee_id) {
+      const assigneeUrl = await taskUrlForUser(rev.id, rev.assignee_id);
+      await notifyUser({
+        userId: rev.assignee_id,
+        actorId: userId || null,
+        type: "task_assigned",
+        title: "New revision task assigned",
+        message: rev.title,
+        entityType: "task",
+        entityId: rev.id,
+        url: assigneeUrl,
+      });
     }
 
     if (rev?.id && revisionFiles.length) {
@@ -267,6 +339,22 @@ export default function AdminTaskDetailPage() {
       author_id: userId,
       state: "completed",
       note: `Revision created: ${rev.title}`,
+    });
+    await logActivity({
+      actorId: userId || null,
+      action: "task_completed_by_revision",
+      entityType: "task",
+      entityId: id,
+      meta: { revision_task_id: rev?.id || null },
+    });
+    await notifyAdmins({
+      actorId: userId || null,
+      type: "activity",
+      title: "Task completed (revision created)",
+      message: task?.title || "",
+      entityType: "task",
+      entityId: id,
+      url: `/admin/tasks/${id}`,
     });
 
     setRevisionForm({ title: "", description: "", due_at: "" });

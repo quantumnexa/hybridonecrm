@@ -92,6 +92,23 @@ export async function startWorkSession({ userId, role }) {
     logout_at: null,
     duration_minutes: 0,
   });
+  await logActivity({
+    actorId: userId,
+    action: "work_session_started",
+    entityType: "work_session",
+    entityId: null,
+    meta: { work_date: workDate },
+  });
+  const p = await getProfileBasicCached(userId);
+  await notifyAdmins({
+    actorId: userId,
+    type: "activity",
+    title: `${p?.display_name || "User"} started work session`,
+    message: `Date: ${workDate}`,
+    entityType: "work_session",
+    entityId: null,
+    url: "/admin/attendance",
+  });
 }
 
 export async function endWorkSession({ userId }) {
@@ -117,6 +134,23 @@ export async function endWorkSession({ userId }) {
       .from("work_sessions")
       .update({ logout_at: now.toISOString(), duration_minutes: mins })
       .eq("id", row.id);
+    await logActivity({
+      actorId: userId,
+      action: "work_session_ended",
+      entityType: "work_session",
+      entityId: row.id,
+      meta: { work_date: loginDay, duration_minutes: mins },
+    });
+    const p = await getProfileBasicCached(userId);
+    await notifyAdmins({
+      actorId: userId,
+      type: "activity",
+      title: `${p?.display_name || "User"} ended work session`,
+      message: `Date: ${loginDay} • ${mins} min`,
+      entityType: "work_session",
+      entityId: row.id,
+      url: "/admin/attendance",
+    });
     return;
   }
 
@@ -143,6 +177,39 @@ export async function endWorkSession({ userId }) {
     logout_at: now.toISOString(),
     duration_minutes: mins2,
   });
+  await logActivity({
+    actorId: userId,
+    action: "work_session_ended",
+    entityType: "work_session",
+    entityId: row.id,
+    meta: { work_date: loginDay, duration_minutes: mins1 },
+  });
+  await logActivity({
+    actorId: userId,
+    action: "work_session_started_and_ended",
+    entityType: "work_session",
+    entityId: null,
+    meta: { work_date: logoutDay, duration_minutes: mins2 },
+  });
+  const p = await getProfileBasicCached(userId);
+  await notifyAdmins({
+    actorId: userId,
+    type: "activity",
+    title: `${p?.display_name || "User"} ended work session`,
+    message: `Date: ${loginDay} • ${mins1} min`,
+    entityType: "work_session",
+    entityId: row.id,
+    url: "/admin/attendance",
+  });
+  await notifyAdmins({
+    actorId: userId,
+    type: "activity",
+    title: `${p?.display_name || "User"} started/ended work session`,
+    message: `Date: ${logoutDay} • ${mins2} min`,
+    entityType: "work_session",
+    entityId: null,
+    url: "/admin/attendance",
+  });
 }
 
 let __userCache = null;
@@ -163,3 +230,123 @@ export async function getUserCached() {
 supabase.auth.onAuthStateChange((_event, session) => {
   __userCache = session?.user || null;
 });
+
+let __adminIdsCache = null;
+let __adminIdsPromise = null;
+
+export async function getAdminUserIdsCached() {
+  if (!supabaseConfigured) return [];
+  if (Array.isArray(__adminIdsCache)) return __adminIdsCache;
+  if (__adminIdsPromise) return __adminIdsPromise;
+  __adminIdsPromise = supabase
+    .from("profiles")
+    .select("user_id")
+    .in("role", ["super_admin", "admin"])
+    .then(({ data }) => {
+      __adminIdsCache = (data || []).map((r) => r.user_id).filter(Boolean);
+      __adminIdsPromise = null;
+      return __adminIdsCache;
+    })
+    .catch(() => {
+      __adminIdsCache = [];
+      __adminIdsPromise = null;
+      return __adminIdsCache;
+    });
+  return __adminIdsPromise;
+}
+
+let __profileCache = new Map();
+
+export async function getProfileBasicCached(userId) {
+  if (!supabaseConfigured || !userId) return null;
+  if (__profileCache.has(userId)) return __profileCache.get(userId);
+  const { data } = await supabase.from("profiles").select("user_id, org_id, role, display_name").eq("user_id", userId).maybeSingle();
+  const row = data || null;
+  __profileCache.set(userId, row);
+  return row;
+}
+
+export async function createNotifications(rows) {
+  if (!supabaseConfigured) return;
+  const arr = Array.isArray(rows) ? rows : [rows];
+  if (!arr.length) return;
+  const { error } = await supabase.from("notifications").insert(arr);
+  if (error) {
+    console.error("notifications.insert failed", error);
+  }
+}
+
+export async function markNotificationRead(notificationId) {
+  if (!supabaseConfigured || !notificationId) return;
+  await supabase.from("notifications").update({ is_read: true, read_at: new Date().toISOString() }).eq("id", notificationId);
+}
+
+export async function markAllNotificationsRead(userId) {
+  if (!supabaseConfigured || !userId) return;
+  await supabase
+    .from("notifications")
+    .update({ is_read: true, read_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("is_read", false);
+}
+
+export async function logActivity({ actorId, action, entityType, entityId, meta }) {
+  if (!supabaseConfigured || !actorId || !action) return;
+  const prof = await getProfileBasicCached(actorId);
+  const { error } = await supabase.from("activity_logs").insert({
+    org_id: prof?.org_id || null,
+    actor_id: actorId,
+    actor_role: prof?.role || null,
+    action,
+    entity_type: entityType || null,
+    entity_id: entityId || null,
+    meta: meta || {},
+  });
+  if (error) {
+    console.error("activity_logs.insert failed", error);
+  }
+}
+
+export async function notifyAdmins({ actorId, type, title, message, entityType, entityId, url }) {
+  if (!supabaseConfigured || !title) return;
+  const adminIds = await getAdminUserIdsCached();
+  if (!adminIds.length) return;
+  const prof = actorId ? await getProfileBasicCached(actorId) : null;
+  const rows = adminIds.map((uid) => ({
+    org_id: prof?.org_id || null,
+    user_id: uid,
+    actor_id: actorId || null,
+    type: type || "activity",
+    title,
+    message: message || null,
+    entity_type: entityType || null,
+    entity_id: entityId || null,
+    url: url || null,
+  }));
+  await createNotifications(rows);
+}
+
+export async function notifyUser({ userId, actorId, type, title, message, entityType, entityId, url }) {
+  if (!supabaseConfigured || !userId || !title) return;
+  const prof = actorId ? await getProfileBasicCached(actorId) : null;
+  await createNotifications({
+    org_id: prof?.org_id || null,
+    user_id: userId,
+    actor_id: actorId || null,
+    type: type || "activity",
+    title,
+    message: message || null,
+    entity_type: entityType || null,
+    entity_id: entityId || null,
+    url: url || null,
+  });
+}
+
+export async function taskUrlForUser(taskId, userId) {
+  if (!taskId || !userId) return null;
+  const p = await getProfileBasicCached(userId);
+  const r = p?.role || null;
+  if (r === "super_admin") return `/admin/tasks/${taskId}`;
+  if (r === "general_user") return `/general/tasks/${taskId}`;
+  return `/sales/tasks/${taskId}`;
+}

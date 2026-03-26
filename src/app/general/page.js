@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { supabase, getUserCached } from "@/lib/supabase";
+import { supabase, getUserCached, logActivity, notifyAdmins, notifyUser, taskUrlForUser } from "@/lib/supabase";
 import Link from "next/link";
 import { formatLocalDateTime12 } from "@/lib/timeFormat";
 import ClockWidget from "@/components/ClockWidget";
@@ -196,6 +196,35 @@ export default function GeneralTasksPage() {
       setCreating(false);
       return;
     }
+    await logActivity({
+      actorId: userId,
+      action: "task_created",
+      entityType: "task",
+      entityId: data?.id || null,
+      meta: { title: data?.title || null, assignee_id: data?.assignee_id || null, status: data?.status || null, due_at: data?.due_at || null },
+    });
+    await notifyAdmins({
+      actorId: userId,
+      type: "activity",
+      title: "Task created",
+      message: data?.title || "",
+      entityType: "task",
+      entityId: data?.id || null,
+      url: "/admin/tasks",
+    });
+    if (data?.assignee_id) {
+      const assigneeUrl = await taskUrlForUser(data.id, data.assignee_id);
+      await notifyUser({
+        userId: data.assignee_id,
+        actorId: userId,
+        type: "task_assigned",
+        title: "New task assigned",
+        message: data.title,
+        entityType: "task",
+        entityId: data.id,
+        url: assigneeUrl,
+      });
+    }
     if (createFiles.length > 0) {
       const bucket = "project-docs";
       for (const file of createFiles) {
@@ -275,6 +304,40 @@ export default function GeneralTasksPage() {
       setSavingEdit(false);
       return;
     }
+    await logActivity({
+      actorId: userId,
+      action: "task_updated",
+      entityType: "task",
+      entityId: updated?.id || null,
+      meta: {
+        title: updated?.title || null,
+        status: updated?.status || null,
+        due_at: updated?.due_at || null,
+        assignee_id: updated?.assignee_id || null,
+      },
+    });
+    await notifyAdmins({
+      actorId: userId,
+      type: "activity",
+      title: "Task updated",
+      message: updated?.title || "",
+      entityType: "task",
+      entityId: updated?.id || null,
+      url: "/admin/tasks",
+    });
+    if (editingTask?.assignee_id !== updated?.assignee_id && updated?.assignee_id) {
+      const assigneeUrl = await taskUrlForUser(updated.id, updated.assignee_id);
+      await notifyUser({
+        userId: updated.assignee_id,
+        actorId: userId,
+        type: "task_assigned",
+        title: "Task assigned to you",
+        message: updated.title,
+        entityType: "task",
+        entityId: updated.id,
+        url: assigneeUrl,
+      });
+    }
 
     if (editFiles.length > 0) {
       const bucket = "project-docs";
@@ -325,6 +388,22 @@ export default function GeneralTasksPage() {
       setError(dErr.message || "Failed to delete task");
       return;
     }
+    await logActivity({
+      actorId: userId,
+      action: "task_deleted",
+      entityType: "task",
+      entityId: t.id,
+      meta: { title: t.title || null },
+    });
+    await notifyAdmins({
+      actorId: userId,
+      type: "activity",
+      title: "Task deleted",
+      message: t.title || "",
+      entityType: "task",
+      entityId: t.id,
+      url: "/admin/tasks",
+    });
     await loadAll();
   };
 

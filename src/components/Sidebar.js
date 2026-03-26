@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
 import LogoutButton from "./LogoutButton";
+import { supabase, getUserCached } from "@/lib/supabase";
 
 const icons = {
   dashboard: (
@@ -66,12 +67,57 @@ const icons = {
       <path d="M7 8h10M7 12h10M7 16h6" />
     </svg>
   ),
+  notifications: (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+      <path d="M13.73 21a2 2 0 01-3.46 0" />
+    </svg>
+  ),
 };
 
 export default function Sidebar({ items = [], title = "", logo = true }) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
   const width = collapsed ? "w-16" : "w-64";
+  const [notifUserId, setNotifUserId] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const loadUnreadCount = useCallback(async (uid) => {
+    if (!uid) return;
+    const { count } = await supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", uid)
+      .eq("is_read", false);
+    setUnreadCount(Number(count || 0));
+  }, []);
+
+  useEffect(() => {
+    const run = async () => {
+      const u = await getUserCached();
+      const uid = u?.id || null;
+      setNotifUserId(uid);
+      if (uid) await loadUnreadCount(uid);
+    };
+    run();
+  }, [loadUnreadCount]);
+
+  useEffect(() => {
+    if (!notifUserId) return;
+    const ch = supabase
+      .channel(`notifications:${notifUserId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${notifUserId}` },
+        async () => {
+          await loadUnreadCount(notifUserId);
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [notifUserId, loadUnreadCount]);
 
   return (
     <aside
@@ -96,6 +142,7 @@ export default function Sidebar({ items = [], title = "", logo = true }) {
       <nav className="mt-2 space-y-1 px-1 flex-1 overflow-y-auto pb-16">
         {items.map((item) => {
           const active = pathname?.startsWith(item.href);
+          const showBadge = item.icon === "notifications" && unreadCount > 0;
           return (
             <Link
               key={item.href}
@@ -104,10 +151,24 @@ export default function Sidebar({ items = [], title = "", logo = true }) {
                 collapsed ? "justify-center px-0" : "gap-3 px-3"
               } ${active ? "bg-hover text-background" : "text-foreground hover:bg-heading hover:text-background"}`}
             >
-              <span className="flex h-6 w-6 items-center justify-center">
+              <span className="relative flex h-6 w-6 items-center justify-center">
                 {icons[item.icon] || icons.dashboard}
+                {collapsed && showBadge && (
+                  <span className="absolute -right-1 -top-1 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
               </span>
-              {!collapsed && <span>{item.label}</span>}
+              {!collapsed && (
+                <span className="flex-1 truncate">
+                  {item.label}
+                </span>
+              )}
+              {!collapsed && showBadge && (
+                <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
             </Link>
           );
         })}

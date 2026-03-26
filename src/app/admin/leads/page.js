@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { supabase, logActivity, notifyAdmins, notifyUser } from "@/lib/supabase";
 import { formatLocalDateTime12 } from "@/lib/timeFormat";
 
 function Filters({ onChange, salesProfiles = [] }) {
@@ -639,6 +639,22 @@ export default function Page() {
       if (data) {
         setLeads((prev) => [data, ...prev]);
         await supabase.from("lead_activities").insert({ lead_id: data.id, type: "created", meta: { actor_id: userId || null, actor_label: currentUserLabel || null } });
+        await logActivity({
+          actorId: userId || null,
+          action: "lead_created",
+          entityType: "lead",
+          entityId: data.id,
+          meta: { name: data.name || null, status: data.status || null, source: data.source || null },
+        });
+        await notifyAdmins({
+          actorId: userId || null,
+          type: "lead_created",
+          title: "New lead created",
+          message: data.name || "Unnamed",
+          entityType: "lead",
+          entityId: data.id,
+          url: `/admin/leads/${data.id}`,
+        });
       }
     };
     run();
@@ -673,6 +689,24 @@ export default function Page() {
       if (toInsert.length > 0) {
         await supabase.from("lead_activities").insert(toInsert);
       }
+      if (patch.status && patch.status !== prev.status) {
+        await logActivity({
+          actorId: userId || null,
+          action: "lead_status_changed",
+          entityType: "lead",
+          entityId: id,
+          meta: { from: prev.status || null, to: patch.status || null, name: data?.name || prev?.name || null },
+        });
+        await notifyAdmins({
+          actorId: userId || null,
+          type: "lead_status",
+          title: "Lead status changed",
+          message: `${data?.name || prev?.name || "Lead"}: ${(prev.status || "New")} → ${patch.status}`,
+          entityType: "lead",
+          entityId: id,
+          url: `/admin/leads/${id}`,
+        });
+      }
     };
     run();
   };
@@ -692,6 +726,34 @@ export default function Page() {
       setLeads((p) => p.map((l) => (l.id === id ? { ...l, ...data } : l)));
       if (selected?.id === id) setSelected((s) => ({ ...s, ...data }));
       await supabase.from("lead_activities").insert({ lead_id: id, type: "assigned", meta: { assignee_id: userIdValue || null, assignee_label: label || null, actor_id: userId || null, actor_label: currentUserLabel || null } });
+      await logActivity({
+        actorId: userId || null,
+        action: "lead_assigned",
+        entityType: "lead",
+        entityId: id,
+        meta: { assignee_id: userIdValue || null, assignee_label: label || null, name: data?.name || null },
+      });
+      await notifyAdmins({
+        actorId: userId || null,
+        type: "lead_assigned",
+        title: "Lead assigned",
+        message: `${data?.name || "Lead"} → ${label || "Unassigned"}`,
+        entityType: "lead",
+        entityId: id,
+        url: `/admin/leads/${id}`,
+      });
+      if (userIdValue) {
+        await notifyUser({
+          userId: userIdValue,
+          actorId: userId || null,
+          type: "lead_assigned",
+          title: "Lead assigned to you",
+          message: data?.name || "Lead",
+          entityType: "lead",
+          entityId: id,
+          url: `/sales/leads/${id}`,
+        });
+      }
     };
     run();
   };

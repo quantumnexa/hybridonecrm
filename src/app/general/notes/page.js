@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { supabase, getUserCached } from "@/lib/supabase";
+import { supabase, getUserCached, logActivity, notifyAdmins } from "@/lib/supabase";
 
 export default function GeneralNotesPage() {
   const [notes, setNotes] = useState([]);
@@ -26,6 +26,8 @@ export default function GeneralNotesPage() {
     setError("");
     const { error: err } = await supabase.from("user_notes").insert({ user_id: userId, content: noteText.trim() });
     if (err) { setError(err.message || "Failed to add note"); return; }
+    await logActivity({ actorId: userId, action: "note_created", entityType: "user_note", entityId: null, meta: {} });
+    await notifyAdmins({ actorId: userId, type: "activity", title: "Note created", message: "", entityType: "user_note", entityId: null, url: `/admin/users/${userId}` });
     setNoteText("");
     const { data: ns } = await supabase.from("user_notes").select("*").eq("user_id", userId).order("created_at", { ascending: false });
     setNotes(ns || []);
@@ -35,6 +37,8 @@ export default function GeneralNotesPage() {
     setError("");
     const { error: err } = await supabase.from("user_notes").delete().eq("id", noteId);
     if (err) { setError(err.message || "Failed to delete note"); return; }
+    await logActivity({ actorId: userId, action: "note_deleted", entityType: "user_note", entityId: noteId, meta: {} });
+    await notifyAdmins({ actorId: userId, type: "activity", title: "Note deleted", message: "", entityType: "user_note", entityId: noteId, url: `/admin/users/${userId}` });
     const { data: ns } = await supabase.from("user_notes").select("*").eq("user_id", userId).order("created_at", { ascending: false });
     setNotes(ns || []);
   };

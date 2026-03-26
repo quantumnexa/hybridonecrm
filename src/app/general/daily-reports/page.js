@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
-import { supabase, getUserCached } from "@/lib/supabase";
+import { supabase, getUserCached, logActivity, notifyAdmins } from "@/lib/supabase";
 
 function localDateKey(d) {
   const x = d instanceof Date ? d : new Date(d);
@@ -143,6 +143,22 @@ export default function Page() {
         return;
       }
       report = updated;
+      await logActivity({
+        actorId: userId,
+        action: "daily_report_updated",
+        entityType: "daily_report",
+        entityId: report?.id || null,
+        meta: { report_date: reportDate },
+      });
+      await notifyAdmins({
+        actorId: userId,
+        type: "activity",
+        title: "Daily report updated",
+        message: `Date: ${reportDate}`,
+        entityType: "daily_report",
+        entityId: report?.id || null,
+        url: "/admin/daily-reports",
+      });
     } else {
       const { data: created, error: cErr } = await supabase
         .from("daily_reports")
@@ -160,10 +176,27 @@ export default function Page() {
         return;
       }
       report = created;
+      await logActivity({
+        actorId: userId,
+        action: "daily_report_created",
+        entityType: "daily_report",
+        entityId: report?.id || null,
+        meta: { report_date: reportDate },
+      });
+      await notifyAdmins({
+        actorId: userId,
+        type: "activity",
+        title: "Daily report submitted",
+        message: `Date: ${reportDate}`,
+        entityType: "daily_report",
+        entityId: report?.id || null,
+        url: "/admin/daily-reports",
+      });
     }
 
     if (files.length && report?.id) {
       const bucket = "project-docs";
+      let uploadedCount = 0;
       for (const file of files) {
         const path = `daily_reports/${userId}/${reportDate}/${Date.now()}_${file.name}`;
         const up = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
@@ -180,9 +213,28 @@ export default function Page() {
             .select("*")
             .single();
           if (!insErr && ins) {
+            uploadedCount += 1;
             setDocsByReport((prev) => ({ ...prev, [report.id]: [ins, ...(prev[report.id] || [])] }));
           }
         }
+      }
+      if (uploadedCount > 0) {
+        await logActivity({
+          actorId: userId,
+          action: "daily_report_documents_uploaded",
+          entityType: "daily_report",
+          entityId: report.id,
+          meta: { report_date: reportDate, count: uploadedCount },
+        });
+        await notifyAdmins({
+          actorId: userId,
+          type: "activity",
+          title: "Daily report attachments uploaded",
+          message: `Date: ${reportDate} • ${uploadedCount} file(s)`,
+          entityType: "daily_report",
+          entityId: report.id,
+          url: "/admin/daily-reports",
+        });
       }
     }
 
@@ -205,6 +257,22 @@ export default function Page() {
       setError(delErr.message || "Failed to delete document");
       return;
     }
+    await logActivity({
+      actorId: userId,
+      action: "daily_report_document_deleted",
+      entityType: "daily_report_document",
+      entityId: doc.id,
+      meta: { report_id: doc.report_id, filename: doc.filename || null },
+    });
+    await notifyAdmins({
+      actorId: userId,
+      type: "activity",
+      title: "Daily report attachment deleted",
+      message: doc.filename || "",
+      entityType: "daily_report_document",
+      entityId: doc.id,
+      url: "/admin/daily-reports",
+    });
     setDocsByReport((prev) => ({ ...prev, [doc.report_id]: (prev[doc.report_id] || []).filter((d) => d.id !== doc.id) }));
   };
 
@@ -337,4 +405,3 @@ export default function Page() {
     </AuthGuard>
   );
 }
-

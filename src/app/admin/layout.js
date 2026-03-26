@@ -13,6 +13,7 @@ export default function AdminLayout({ children }) {
             { href: "/admin/appointments", label: "Appointments", icon: "appointments" },
             { href: "/admin/projects", label: "Projects", icon: "projects" },
             { href: "/admin/tasks", label: "Tasks", icon: "tasks" },
+            { href: "/admin/notifications", label: "Notifications", icon: "notifications" },
             { href: "/admin/quotation", label: "Quotation", icon: "quotation" },
             { href: "/admin/users", label: "User management", icon: "users" },
             { href: "/admin/attendance", label: "Attendance", icon: "reports" },

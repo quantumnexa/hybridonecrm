@@ -1,7 +1,7 @@
  "use client";
 import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
-import { supabase, getUserCached } from "@/lib/supabase";
+import { supabase, getUserCached, logActivity, notifyAdmins } from "@/lib/supabase";
 import Link from "next/link";
 
 export default function Page() {
@@ -53,6 +53,8 @@ export default function Page() {
     if (data) {
       setLeads((prev) => [data, ...prev]);
       await supabase.from("lead_activities").insert({ lead_id: data.id, type: "created", meta: { actor_id: userId, actor_label: currentUserLabel || "sales" } });
+      await logActivity({ actorId: userId, action: "lead_created", entityType: "lead", entityId: data.id, meta: { name: data.name || null, status: data.status || null, source: data.source || null } });
+      await notifyAdmins({ actorId: userId, type: "lead_created", title: "New lead created", message: data.name || "Unnamed", entityType: "lead", entityId: data.id, url: `/admin/leads/${data.id}` });
     }
   };
   useEffect(() => {

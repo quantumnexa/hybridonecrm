@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import AuthGuard from "@/components/AuthGuard";
-import { supabase } from "@/lib/supabase";
+import { supabase, logActivity, notifyAdmins } from "@/lib/supabase";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 
@@ -100,6 +100,8 @@ export default function LeadDetail() {
       const toInsert = [];
       if (patch.status && patch.status !== prev.status) {
         toInsert.push({ lead_id: lead.id, type: "status_changed", meta: { from: prev.status || null, to: patch.status || null, actor_id: userId || null, actor_label: currentUserLabel || null } });
+        await logActivity({ actorId: userId || null, action: "lead_status_changed", entityType: "lead", entityId: lead.id, meta: { from: prev.status || null, to: patch.status || null, name: data?.name || prev?.name || null } });
+        await notifyAdmins({ actorId: userId || null, type: "lead_status", title: "Lead status changed", message: `${data?.name || prev?.name || "Lead"}: ${(prev.status || "New")} → ${patch.status}`, entityType: "lead", entityId: lead.id, url: `/admin/leads/${lead.id}` });
       }
       if (patch.priority && patch.priority !== prev.priority) {
         toInsert.push({ lead_id: lead.id, type: "priority_changed", meta: { from: prev.priority || null, to: patch.priority || null, actor_id: userId || null, actor_label: currentUserLabel || null } });

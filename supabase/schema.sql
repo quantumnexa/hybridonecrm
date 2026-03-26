@@ -439,3 +439,38 @@ using (
   exists (select 1 from public.daily_reports r where r.id = report_id and r.user_id = auth.uid())
   or exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'super_admin')
 );
+
+create table if not exists public.activity_logs (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete set null,
+  actor_id uuid references auth.users(id) on delete set null,
+  actor_role text,
+  action text not null,
+  entity_type text,
+  entity_id uuid,
+  meta jsonb default '{}'::jsonb,
+  created_at timestamptz default now()
+);
+alter table public.activity_logs disable row level security;
+create index if not exists activity_logs_org_id_idx on public.activity_logs(org_id);
+create index if not exists activity_logs_actor_id_idx on public.activity_logs(actor_id);
+create index if not exists activity_logs_created_at_idx on public.activity_logs(created_at);
+
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete set null,
+  user_id uuid references auth.users(id) on delete cascade,
+  actor_id uuid references auth.users(id) on delete set null,
+  type text not null,
+  title text not null,
+  message text,
+  entity_type text,
+  entity_id uuid,
+  url text,
+  is_read boolean not null default false,
+  read_at timestamptz,
+  created_at timestamptz default now()
+);
+alter table public.notifications disable row level security;
+create index if not exists notifications_user_created_at_idx on public.notifications(user_id, created_at desc);
+create index if not exists notifications_user_unread_idx on public.notifications(user_id, is_read, created_at desc);

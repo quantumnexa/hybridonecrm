@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { supabase, getUserCached } from "@/lib/supabase";
+import { supabase, getUserCached, logActivity, notifyAdmins, notifyUser, taskUrlForUser } from "@/lib/supabase";
 import Link from "next/link";
 
 export default function GeneralTaskDetailPage() {
@@ -185,6 +185,35 @@ export default function GeneralTaskDetailPage() {
       setSaving(false);
       return;
     }
+    await logActivity({
+      actorId: userId,
+      action: "task_updated",
+      entityType: "task",
+      entityId: id,
+      meta: { title: data?.title || null, status: data?.status || null, due_at: data?.due_at || null, assignee_id: data?.assignee_id || null },
+    });
+    await notifyAdmins({
+      actorId: userId,
+      type: "activity",
+      title: "Task updated",
+      message: data?.title || "",
+      entityType: "task",
+      entityId: id,
+      url: "/admin/tasks",
+    });
+    if (task?.assignee_id !== data?.assignee_id && data?.assignee_id) {
+      const assigneeUrl = await taskUrlForUser(id, data.assignee_id);
+      await notifyUser({
+        userId: data.assignee_id,
+        actorId: userId,
+        type: "task_assigned",
+        title: "Task assigned to you",
+        message: data.title,
+        entityType: "task",
+        entityId: id,
+        url: assigneeUrl,
+      });
+    }
     setTask(data || null);
     setEditMode(false);
     setSaving(false);
@@ -200,6 +229,16 @@ export default function GeneralTaskDetailPage() {
       setError(err.message || "Failed to delete task");
       return;
     }
+    await logActivity({ actorId: userId, action: "task_deleted", entityType: "task", entityId: id, meta: { title: task?.title || null } });
+    await notifyAdmins({
+      actorId: userId,
+      type: "activity",
+      title: "Task deleted",
+      message: task?.title || "",
+      entityType: "task",
+      entityId: id,
+      url: "/admin/tasks",
+    });
     window.location.href = "/general";
   };
 
@@ -249,6 +288,35 @@ export default function GeneralTaskDetailPage() {
       setSavingRevision(false);
       return;
     }
+    await logActivity({
+      actorId: userId,
+      action: "task_revision_created",
+      entityType: "task",
+      entityId: rev?.id || null,
+      meta: { parent_task_id: id, title: rev?.title || null, due_at: rev?.due_at || null },
+    });
+    await notifyAdmins({
+      actorId: userId,
+      type: "activity",
+      title: "Task revision created",
+      message: rev?.title || "",
+      entityType: "task",
+      entityId: rev?.id || null,
+      url: "/admin/tasks",
+    });
+    if (rev?.assignee_id) {
+      const assigneeUrl = await taskUrlForUser(rev.id, rev.assignee_id);
+      await notifyUser({
+        userId: rev.assignee_id,
+        actorId: userId,
+        type: "task_assigned",
+        title: "New revision task assigned",
+        message: rev.title,
+        entityType: "task",
+        entityId: rev.id,
+        url: assigneeUrl,
+      });
+    }
 
     if (rev?.id && revisionFiles.length) {
       const bucket = "project-docs";
@@ -274,6 +342,22 @@ export default function GeneralTaskDetailPage() {
       state: "completed",
       note: `Revision created: ${rev.title}`,
     });
+    await logActivity({
+      actorId: userId,
+      action: "task_completed_by_revision",
+      entityType: "task",
+      entityId: id,
+      meta: { revision_task_id: rev?.id || null },
+    });
+    await notifyAdmins({
+      actorId: userId,
+      type: "activity",
+      title: "Task completed (revision created)",
+      message: task?.title || "",
+      entityType: "task",
+      entityId: id,
+      url: "/admin/tasks",
+    });
 
     setRevisionForm({ title: "", description: "", due_at: "" });
     setRevisionFiles([]);
@@ -297,6 +381,13 @@ export default function GeneralTaskDetailPage() {
       return;
     }
     if (data) setUpdates((prev) => [data, ...prev]);
+    await logActivity({ actorId: userId, action: "task_update_added", entityType: "task", entityId: id, meta: { note } });
+    await notifyAdmins({ actorId: userId, type: "activity", title: "Task update added", message: task?.title || "", entityType: "task", entityId: id, url: "/admin/tasks" });
+    for (const uid of [task?.created_by, task?.assignee_id].filter(Boolean)) {
+      if (uid === userId) continue;
+      const url = await taskUrlForUser(id, uid);
+      await notifyUser({ userId: uid, actorId: userId, type: "task_update", title: "Task updated", message: note, entityType: "task", entityId: id, url });
+    }
     setNoteDraft("");
     setSaving(false);
   };
@@ -319,6 +410,12 @@ export default function GeneralTaskDetailPage() {
     setTask(t || null);
     const note = noteDraft.trim();
     await supabase.from("task_updates").insert({ task_id: id, author_id: userId, state: "completed", note: note || null });
+    await logActivity({ actorId: userId, action: "task_completed", entityType: "task", entityId: id, meta: { note: note || null } });
+    await notifyAdmins({ actorId: userId, type: "activity", title: "Task completed", message: t?.title || "", entityType: "task", entityId: id, url: "/admin/tasks" });
+    if (task?.created_by && task.created_by !== userId) {
+      const url = await taskUrlForUser(id, task.created_by);
+      await notifyUser({ userId: task.created_by, actorId: userId, type: "task_completed", title: "Task completed", message: t?.title || "", entityType: "task", entityId: id, url });
+    }
     setNoteDraft("");
     await loadAll();
     setSaving(false);
@@ -342,6 +439,12 @@ export default function GeneralTaskDetailPage() {
     setTask(t || null);
     const note = noteDraft.trim();
     await supabase.from("task_updates").insert({ task_id: id, author_id: userId, state: "not_completed", note: note || null });
+    await logActivity({ actorId: userId, action: "task_in_progress", entityType: "task", entityId: id, meta: { note: note || null } });
+    await notifyAdmins({ actorId: userId, type: "activity", title: "Task moved to In Progress", message: t?.title || "", entityType: "task", entityId: id, url: "/admin/tasks" });
+    if (task?.created_by && task.created_by !== userId) {
+      const url = await taskUrlForUser(id, task.created_by);
+      await notifyUser({ userId: task.created_by, actorId: userId, type: "task_status", title: "Task is in progress", message: t?.title || "", entityType: "task", entityId: id, url });
+    }
     setNoteDraft("");
     await loadAll();
     setSaving(false);
@@ -352,6 +455,7 @@ export default function GeneralTaskDetailPage() {
     setError("");
     setUploading(true);
     const bucket = "project-docs";
+    let uploadedCount = 0;
     for (const file of uploadFiles) {
       const path = `tasks/${id}/${Date.now()}_${file.name}`;
       const up = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
@@ -367,11 +471,18 @@ export default function GeneralTaskDetailPage() {
           .insert({ task_id: id, uploaded_by: userId, filename: file.name, url })
           .select("*")
           .single();
-        if (!insErr && ins) setDocs((prev) => [ins, ...prev]);
+        if (!insErr && ins) {
+          uploadedCount += 1;
+          setDocs((prev) => [ins, ...prev]);
+        }
       }
     }
     setUploadFiles([]);
     setUploading(false);
+    if (uploadedCount > 0) {
+      await logActivity({ actorId: userId, action: "task_documents_uploaded", entityType: "task", entityId: id, meta: { count: uploadedCount } });
+      await notifyAdmins({ actorId: userId, type: "activity", title: "Task attachments uploaded", message: task?.title || "", entityType: "task", entityId: id, url: "/admin/tasks" });
+    }
   };
 
   const renameDoc = async (doc) => {
@@ -388,6 +499,8 @@ export default function GeneralTaskDetailPage() {
       setError(err.message || "Failed to rename document");
       return;
     }
+    await logActivity({ actorId: userId, action: "task_document_renamed", entityType: "task_document", entityId: doc.id, meta: { filename: newName.trim() } });
+    await notifyAdmins({ actorId: userId, type: "activity", title: "Task attachment renamed", message: newName.trim(), entityType: "task_document", entityId: doc.id, url: "/admin/tasks" });
     if (data) setDocs((prev) => prev.map((d) => (d.id === doc.id ? data : d)));
   };
 
@@ -403,6 +516,8 @@ export default function GeneralTaskDetailPage() {
       setError(delErr.message || "Failed to delete document");
       return;
     }
+    await logActivity({ actorId: userId, action: "task_document_deleted", entityType: "task_document", entityId: doc.id, meta: { filename: doc.filename || null } });
+    await notifyAdmins({ actorId: userId, type: "activity", title: "Task attachment deleted", message: doc.filename || "", entityType: "task_document", entityId: doc.id, url: "/admin/tasks" });
     setDocs((prev) => prev.filter((d) => d.id !== doc.id));
   };
 

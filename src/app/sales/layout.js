@@ -10,6 +10,7 @@ export default function SalesLayout({ children }) {
           items={[
             { href: "/sales/dashboard", label: "Dashboard", icon: "dashboard" },
             { href: "/sales/tasks", label: "Tasks", icon: "tasks" },
+            { href: "/sales/notifications", label: "Notifications", icon: "notifications" },
             { href: "/sales/notes", label: "My Notes", icon: "profile" },
             { href: "/sales/shifts", label: "My Shifts", icon: "appointments" },
             { href: "/sales/leads", label: "Leads", icon: "leads" },
