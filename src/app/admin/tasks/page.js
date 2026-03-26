@@ -86,7 +86,7 @@ export default function AdminTasksPage() {
     setError("");
     let q = supabase.from("tasks").select("*");
     if (bounds.from && bounds.to) {
-      q = q.gte("created_at", bounds.from).lt("created_at", bounds.to);
+      q = q.gte("due_at", bounds.from).lt("due_at", bounds.to);
     }
     const { data: t } = await q.order("created_at", { ascending: false });
     setTasks(t || []);
@@ -262,7 +262,7 @@ export default function AdminTasksPage() {
             />
           </div>
           <div className="mt-2 text-xs text-black/60">
-            Filter by created date • {bounds.from ? formatDateCustom(bounds.from) : "-"} → {bounds.to ? formatDateCustom(bounds.to) : "-"}
+            Filter by deadline • {bounds.from ? formatDateCustom(bounds.from) : "-"} → {bounds.to ? formatDateCustom(bounds.to) : "-"}
           </div>
         </div>
 

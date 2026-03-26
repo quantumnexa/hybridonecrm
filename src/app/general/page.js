@@ -93,11 +93,11 @@ export default function GeneralTasksPage() {
     setUserId(uid);
     if (!uid) return;
     let myQ = supabase.from("tasks").select("*").eq("assignee_id", uid);
-    if (bounds.from && bounds.to) myQ = myQ.gte("created_at", bounds.from).lt("created_at", bounds.to);
+    if (bounds.from && bounds.to) myQ = myQ.gte("due_at", bounds.from).lt("due_at", bounds.to);
     const { data: ts } = await myQ.order("created_at", { ascending: false });
     setTasks(ts || []);
     let byMeQ = supabase.from("tasks").select("*").eq("created_by", uid);
-    if (bounds.from && bounds.to) byMeQ = byMeQ.gte("created_at", bounds.from).lt("created_at", bounds.to);
+    if (bounds.from && bounds.to) byMeQ = byMeQ.gte("due_at", bounds.from).lt("due_at", bounds.to);
     const { data: myAssigned } = await byMeQ.order("created_at", { ascending: false });
     setAssignedByMe(myAssigned || []);
     const { data: profs } = await supabase.from("profiles").select("user_id, display_name, role").order("created_at", { ascending: false });
@@ -368,7 +368,7 @@ export default function GeneralTasksPage() {
           />
         </div>
         <div className="mt-2 text-xs text-black/60">
-          Filter by created date • {bounds.from ? bounds.from.slice(0, 10) : "-"} → {bounds.to ? bounds.to.slice(0, 10) : "-"}
+          Filter by deadline • {bounds.from ? bounds.from.slice(0, 10) : "-"} → {bounds.to ? bounds.to.slice(0, 10) : "-"}
         </div>
       </div>
 
