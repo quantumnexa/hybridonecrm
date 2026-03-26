@@ -81,6 +81,12 @@ export default function AdminTasksPage() {
     return b ? { from: b.from.toISOString(), to: b.to.toISOString() } : { from: "", to: "" };
   });
   const [query, setQuery] = useState("");
+  const [viewMode, setViewMode] = useState("grid"); // 'grid' or 'list'
+
+  const [editingTask, setEditingTask] = useState(null);
+  const [editForm, setEditForm] = useState({ title: "", description: "", due_at: "", assignee_id: "", status: "open" });
+  const [editFiles, setEditFiles] = useState([]);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setError("");
@@ -198,12 +204,124 @@ export default function AdminTasksPage() {
     await fetchAll();
   };
 
+  const openEdit = (t) => {
+    setError("");
+    setEditingTask(t);
+    setEditFiles([]);
+    setEditForm({
+      title: t.title || "",
+      description: t.description || "",
+      due_at: t.due_at ? toIsoInputValue(new Date(t.due_at)) : "",
+      assignee_id: t.assignee_id || "",
+      status: t.status || "open",
+    });
+  };
+
+  const closeEdit = () => {
+    setEditingTask(null);
+    setEditFiles([]);
+  };
+
+  const saveEdit = async () => {
+    if (!editingTask?.id) return;
+    if (!editForm.title.trim()) return;
+    setError("");
+    setSavingEdit(true);
+    const due = editForm.due_at ? new Date(editForm.due_at).toISOString() : null;
+    const payload = {
+      title: editForm.title.trim(),
+      description: editForm.description?.trim() || null,
+      due_at: due,
+      status: editForm.status || "open",
+      assignee_id: editForm.assignee_id || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { data: updated, error: uErr } = await supabase
+      .from("tasks")
+      .update(payload)
+      .eq("id", editingTask.id)
+      .select("*")
+      .single();
+    if (uErr) {
+      setError(uErr.message || "Failed to update task");
+      setSavingEdit(false);
+      return;
+    }
+
+    if (editFiles.length > 0) {
+      const bucket = "project-docs";
+      for (const file of editFiles) {
+        const path = `tasks/${updated.id}/${Date.now()}_${file.name}`;
+        const up = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
+        if (up.error) {
+          setError(up.error.message || "Failed to upload file");
+          continue;
+        }
+        const pub = supabase.storage.from(bucket).getPublicUrl(path);
+        const url = pub?.data?.publicUrl || null;
+        if (url) {
+          await supabase.from("task_documents").insert({ task_id: updated.id, uploaded_by: userId, filename: file.name, url });
+        }
+      }
+    }
+
+    setSavingEdit(false);
+    closeEdit();
+    await fetchAll();
+  };
+
+  const deleteTask = async (t) => {
+    if (!t?.id) return;
+    const ok = typeof window !== "undefined" ? window.confirm("Delete this task permanently?") : false;
+    if (!ok) return;
+    setError("");
+
+    const bucket = "project-docs";
+    const docs = taskDocs[t.id] || [];
+    const prefix = `/storage/v1/object/public/${bucket}/`;
+    const paths = docs
+      .map((d) => {
+        const url = d?.url || "";
+        const idx = url.indexOf(prefix);
+        if (idx < 0) return "";
+        return url.substring(idx + prefix.length);
+      })
+      .filter(Boolean);
+    if (paths.length) {
+      await supabase.storage.from(bucket).remove(paths);
+    }
+    await supabase.from("task_documents").delete().eq("task_id", t.id);
+
+    const { error: dErr } = await supabase.from("tasks").delete().eq("id", t.id);
+    if (dErr) {
+      setError(dErr.message || "Failed to delete task");
+      return;
+    }
+    await fetchAll();
+  };
+
   return (
     <AuthGuard allowedRoles={["super_admin"]}>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-heading text-2xl font-bold">Tasks</h1>
-          <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={fetchAll}>Refresh</button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-md border border-black/10 bg-white p-1">
+              <button
+                className={`rounded px-3 py-1 text-sm ${viewMode === "list" ? "bg-black/10 font-semibold" : "hover:bg-black/5"}`}
+                onClick={() => setViewMode("list")}
+              >
+                List
+              </button>
+              <button
+                className={`rounded px-3 py-1 text-sm ${viewMode === "grid" ? "bg-black/10 font-semibold" : "hover:bg-black/5"}`}
+                onClick={() => setViewMode("grid")}
+              >
+                Grid
+              </button>
+            </div>
+            <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={fetchAll}>Refresh</button>
+          </div>
         </div>
 
         <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
@@ -295,54 +413,221 @@ export default function AdminTasksPage() {
 
         <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
           <div className="text-sm font-semibold text-heading">Tasks</div>
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {filteredTasks.map((t) => {
-              const assignee = users.find((u) => u.user_id === t.assignee_id);
-              const creator = users.find((u) => u.user_id === t.created_by);
-              const attachmentsCount = (taskDocs[t.id] || []).length;
-              const statusLabel =
-                t.status === "in_progress"
-                  ? "In Progress"
-                  : t.status === "completed"
-                    ? "Completed"
-                    : t.status === "cancelled"
-                      ? "Cancelled"
-                      : "Open";
-              const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
-              return (
-                <Link
-                  key={t.id}
-                  href={`/admin/tasks/${t.id}`}
-                  className="block rounded-xl border border-black/10 bg-white p-4 shadow-sm hover:bg-black/[0.02]"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-heading truncate">{t.title}</div>
-                      <div className="mt-1 text-xs text-black/60">
-                        {statusLabel} • {dueText}
+          {viewMode === "grid" ? (
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredTasks.map((t) => {
+                const assignee = users.find((u) => u.user_id === t.assignee_id);
+                const creator = users.find((u) => u.user_id === t.created_by);
+                const attachmentsCount = (taskDocs[t.id] || []).length;
+                const statusLabel =
+                  t.status === "in_progress"
+                    ? "In Progress"
+                    : t.status === "completed"
+                      ? "Completed"
+                      : t.status === "cancelled"
+                        ? "Cancelled"
+                        : "Open";
+                const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
+                return (
+                  <Link
+                    key={t.id}
+                    href={`/admin/tasks/${t.id}`}
+                    className="block rounded-xl border border-black/10 bg-white p-4 shadow-sm hover:bg-black/[0.02]"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-heading truncate">{t.title}</div>
+                        <div className="mt-1 text-xs text-black/60">
+                          {statusLabel} • {dueText}
+                        </div>
+                      </div>
+                      <div className="shrink-0 rounded-md border border-black/10 px-2 py-1 text-xs text-black/70">
+                        {attachmentsCount} files
                       </div>
                     </div>
-                    <div className="shrink-0 rounded-md border border-black/10 px-2 py-1 text-xs text-black/70">
-                      {attachmentsCount} files
+                    <div className="mt-3 text-sm text-black/80">
+                      {(t.description || "").trim() ? (
+                        <div className="line-clamp-3">{t.description}</div>
+                      ) : (
+                        <div className="text-black/60">No description.</div>
+                      )}
                     </div>
-                  </div>
-                  <div className="mt-3 text-sm text-black/80">
-                    {(t.description || "").trim() ? (
-                      <div className="line-clamp-3">{t.description}</div>
-                    ) : (
-                      <div className="text-black/60">No description.</div>
-                    )}
-                  </div>
-                  <div className="mt-3 text-xs text-black/60 truncate">
-                    {assignee ? `Assigned to: ${assignee.display_name || assignee.user_id}` : "Unassigned"}
-                    {creator ? ` • By: ${creator.display_name || creator.user_id}` : ""}
-                  </div>
-                </Link>
-              );
-            })}
-            {filteredTasks.length === 0 && <div className="text-sm text-black/60">No tasks yet.</div>}
+                    <div className="mt-3 text-xs text-black/60 truncate">
+                      {assignee ? `Assigned to: ${assignee.display_name || assignee.user_id}` : "Unassigned"}
+                      {creator ? ` • By: ${creator.display_name || creator.user_id}` : ""}
+                    </div>
+                    <div className="mt-3 flex items-center justify-end gap-2">
+                      <button
+                        className="rounded-md border border-black/10 px-3 py-1 text-sm hover:bg-black/5"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openEdit(t);
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="rounded-md border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700 hover:bg-red-100"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          deleteTask(t);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </Link>
+                );
+              })}
+              {filteredTasks.length === 0 && <div className="text-sm text-black/60">No tasks yet.</div>}
+            </div>
+          ) : (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-black/10 text-black/60">
+                    <th className="py-2 font-medium">Title</th>
+                    <th className="py-2 font-medium">Status</th>
+                    <th className="py-2 font-medium">Due</th>
+                    <th className="py-2 font-medium">Assignee</th>
+                    <th className="py-2 font-medium">Created By</th>
+                    <th className="py-2 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/5">
+                  {filteredTasks.map((t) => {
+                    const assignee = users.find((u) => u.user_id === t.assignee_id);
+                    const creator = users.find((u) => u.user_id === t.created_by);
+                    const statusLabel =
+                      t.status === "in_progress"
+                        ? "In Progress"
+                        : t.status === "completed"
+                          ? "Completed"
+                          : t.status === "cancelled"
+                            ? "Cancelled"
+                            : "Open";
+                    const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "-";
+                    return (
+                      <tr key={t.id} className="hover:bg-black/[0.02]">
+                        <td className="py-2">
+                          <Link href={`/admin/tasks/${t.id}`} className="font-semibold text-heading hover:underline">
+                            {t.title}
+                          </Link>
+                        </td>
+                        <td className="py-2">{statusLabel}</td>
+                        <td className="py-2">{dueText}</td>
+                        <td className="py-2">{assignee ? assignee.display_name || assignee.user_id : "-"}</td>
+                        <td className="py-2">{creator ? creator.display_name || creator.user_id : "-"}</td>
+                        <td className="py-2 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              className="rounded-md border border-black/10 px-2 py-1 text-xs hover:bg-black/5"
+                              onClick={() => openEdit(t)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700 hover:bg-red-100"
+                              onClick={() => deleteTask(t)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredTasks.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="py-4 text-center text-black/60">
+                        No tasks yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+      {editingTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="text-sm font-semibold text-heading">Edit Task</div>
+              <button className="rounded-md border border-black/10 px-3 py-1 hover:bg-black/5" onClick={closeEdit}>
+                Close
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  placeholder="Title"
+                  value={editForm.title}
+                  onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                />
+                <select
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={editForm.status}
+                  onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
+                >
+                  <option value="open">Open</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <input
+                  type="datetime-local"
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={editForm.due_at}
+                  onChange={(e) => setEditForm((f) => ({ ...f, due_at: e.target.value }))}
+                />
+                <select
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={editForm.assignee_id || ""}
+                  onChange={(e) => setEditForm((f) => ({ ...f, assignee_id: e.target.value }))}
+                >
+                  <option value="">Unassigned</option>
+                  {users.map((u) => (
+                    <option key={u.user_id} value={u.user_id}>
+                      {u.display_name || u.user_id}
+                    </option>
+                  ))}
+                </select>
+                <textarea
+                  className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                  rows={3}
+                  placeholder="Description"
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                />
+                <input
+                  className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
+                  multiple
+                  onChange={(e) => setEditFiles(Array.from(e.target.files || []))}
+                />
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={closeEdit} disabled={savingEdit}>
+                  Cancel
+                </button>
+                <button
+                  className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
+                  onClick={saveEdit}
+                  disabled={savingEdit || !editForm.title.trim()}
+                >
+                  {savingEdit ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
+      )}
       </div>
     </AuthGuard>
   );

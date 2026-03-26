@@ -21,12 +21,17 @@ export default function GeneralTaskDetailPage() {
   const [noteDraft, setNoteDraft] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [editMode, setEditMode] = useState(false);
+  const [editForm, setEditForm] = useState({ title: "", description: "", due_at: "", assignee_id: "", status: "open" });
+
   const [uploadFiles, setUploadFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
 
   const [revisionForm, setRevisionForm] = useState({ title: "", description: "", due_at: "" });
   const [revisionFiles, setRevisionFiles] = useState([]);
   const [savingRevision, setSavingRevision] = useState(false);
+
+  const [generalProfiles, setGeneralProfiles] = useState([]);
 
   const loadAll = useCallback(async () => {
     if (!id) return;
@@ -129,6 +134,9 @@ export default function GeneralTaskDetailPage() {
       setProfileMap({});
     }
 
+    const { data: genProfs } = await supabase.from("profiles").select("user_id, display_name").eq("role", "general_user");
+    setGeneralProfiles(genProfs || []);
+
     setLoading(false);
   }, [id]);
 
@@ -138,6 +146,62 @@ export default function GeneralTaskDetailPage() {
     };
     init();
   }, [loadAll]);
+
+  const canEdit = useMemo(() => {
+    return !!task && !!userId && task.created_by === userId;
+  }, [task, userId]);
+
+  const startEdit = () => {
+    if (!task) return;
+    const dstr = task.due_at ? new Date(task.due_at) : null;
+    const off = dstr ? dstr.getTimezoneOffset() : 0;
+    const localStr = dstr ? new Date(dstr.getTime() - off * 60000).toISOString().slice(0, 16) : "";
+    setEditForm({
+      title: task.title || "",
+      description: task.description || "",
+      due_at: localStr,
+      assignee_id: task.assignee_id || "",
+      status: task.status || "open",
+    });
+    setEditMode(true);
+  };
+
+  const saveEdit = async () => {
+    if (!id || !editForm.title.trim() || !canEdit) return;
+    setError("");
+    setSaving(true);
+    const due = editForm.due_at ? new Date(editForm.due_at).toISOString() : null;
+    const payload = {
+      title: editForm.title.trim(),
+      description: editForm.description?.trim() ? editForm.description.trim() : null,
+      due_at: due,
+      assignee_id: editForm.assignee_id || null,
+      status: editForm.status || "open",
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error: err } = await supabase.from("tasks").update(payload).eq("id", id).select("*").single();
+    if (err) {
+      setError(err.message || "Failed to update task");
+      setSaving(false);
+      return;
+    }
+    setTask(data || null);
+    setEditMode(false);
+    setSaving(false);
+  };
+
+  const deleteTask = async () => {
+    if (!id || !canEdit) return;
+    const ok = typeof window !== "undefined" ? window.confirm("Delete this task?") : false;
+    if (!ok) return;
+    setError("");
+    const { error: err } = await supabase.from("tasks").delete().eq("id", id);
+    if (err) {
+      setError(err.message || "Failed to delete task");
+      return;
+    }
+    window.location.href = "/general";
+  };
 
   const statusLabel =
     task?.status === "in_progress"
@@ -354,9 +418,40 @@ export default function GeneralTaskDetailPage() {
             {task && <div className="text-xs text-black/60">{statusLabel}</div>}
           </div>
         </div>
-        <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={loadAll}>
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={loadAll}>
+            Refresh
+          </button>
+          {canEdit && (
+            <>
+              {!editMode ? (
+                <button className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50" onClick={startEdit}>
+                  Edit
+                </button>
+              ) : (
+                <>
+                  <button
+                    className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
+                    disabled={saving || !editForm.title.trim()}
+                    onClick={saveEdit}
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5 disabled:opacity-50"
+                    disabled={saving}
+                    onClick={() => setEditMode(false)}
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+              <button className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-red-700 hover:bg-red-100 disabled:opacity-50" onClick={deleteTask}>
+                Delete
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
@@ -371,44 +466,90 @@ export default function GeneralTaskDetailPage() {
         <>
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-heading">Task</div>
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <div className="text-xs text-black/60">Title</div>
-                <div className="font-semibold">{task.title}</div>
-              </div>
-              <div>
-                <div className="text-xs text-black/60">Status</div>
-                <div className="font-semibold">{statusLabel}</div>
-              </div>
-              <div>
-                <div className="text-xs text-black/60">Due</div>
-                <div className="font-semibold">{task.due_at ? new Date(task.due_at).toLocaleString() : "-"}</div>
-              </div>
-              <div>
-                <div className="text-xs text-black/60">Parent Task</div>
-                <div className="font-semibold">
-                  {task.parent_task_id ? (
-                    <Link href={`/general/tasks/${task.parent_task_id}`} className="hover:underline">
-                      {task.parent_task_id}
-                    </Link>
-                  ) : (
-                    "-"
-                  )}
+            {!editMode ? (
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs text-black/60">Title</div>
+                  <div className="font-semibold">{task.title}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-black/60">Status</div>
+                  <div className="font-semibold">{statusLabel}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-black/60">Due</div>
+                  <div className="font-semibold">{task.due_at ? new Date(task.due_at).toLocaleString() : "-"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-black/60">Parent Task</div>
+                  <div className="font-semibold">
+                    {task.parent_task_id ? (
+                      <Link href={`/general/tasks/${task.parent_task_id}`} className="hover:underline">
+                        {task.parent_task_id}
+                      </Link>
+                    ) : (
+                      "-"
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-black/60">Assigned To</div>
+                  <div className="font-semibold">{task.assignee_id ? profileMap[task.assignee_id] || "Unknown" : "Unassigned"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-black/60">Assigned By</div>
+                  <div className="font-semibold">{task.created_by ? profileMap[task.created_by] || "Unknown" : "Unknown"}</div>
+                </div>
+                <div className="md:col-span-2">
+                  <div className="text-xs text-black/60">Description</div>
+                  <div className="mt-1 whitespace-pre-wrap text-sm">{task.description || "-"}</div>
                 </div>
               </div>
-              <div>
-                <div className="text-xs text-black/60">Assigned To</div>
-                <div className="font-semibold">{task.assignee_id ? profileMap[task.assignee_id] || "Unknown" : "Unassigned"}</div>
+            ) : (
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  placeholder="Title"
+                  value={editForm.title}
+                  onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                />
+                <select
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={editForm.status}
+                  onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
+                >
+                  <option value="open">Open</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <input
+                  type="datetime-local"
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={editForm.due_at}
+                  onChange={(e) => setEditForm((f) => ({ ...f, due_at: e.target.value }))}
+                />
+                <select
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={editForm.assignee_id || ""}
+                  onChange={(e) => setEditForm((f) => ({ ...f, assignee_id: e.target.value }))}
+                >
+                  <option value="">Unassigned</option>
+                  {generalProfiles.map((p) => (
+                    <option key={p.user_id} value={p.user_id}>
+                      {p.display_name || p.user_id}
+                    </option>
+                  ))}
+                </select>
+                <textarea
+                  className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                  rows={3}
+                  placeholder="Description"
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                />
               </div>
-              <div>
-                <div className="text-xs text-black/60">Assigned By</div>
-                <div className="font-semibold">{task.created_by ? profileMap[task.created_by] || "Unknown" : "Unknown"}</div>
-              </div>
-              <div className="md:col-span-2">
-                <div className="text-xs text-black/60">Description</div>
-                <div className="mt-1 whitespace-pre-wrap text-sm">{task.description || "-"}</div>
-              </div>
-            </div>
+            )}
           </div>
 
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">

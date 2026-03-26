@@ -85,6 +85,7 @@ export default function GeneralTasksPage() {
     return b ? { from: b.from.toISOString(), to: b.to.toISOString() } : { from: "", to: "" };
   });
   const [query, setQuery] = useState("");
+  const [viewMode, setViewMode] = useState("grid"); // 'grid' or 'list'
 
   const loadAll = useCallback(async () => {
     setError("");
@@ -309,7 +310,23 @@ export default function GeneralTasksPage() {
       <ClockWidget />
       <div className="flex items-center justify-between">
         <h1 className="text-heading text-2xl font-bold">Tasks</h1>
-        <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={loadAll}>Refresh</button>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-md border border-black/10 bg-white p-1">
+            <button
+              className={`rounded px-3 py-1 text-sm ${viewMode === "list" ? "bg-black/10 font-semibold" : "hover:bg-black/5"}`}
+              onClick={() => setViewMode("list")}
+            >
+              List
+            </button>
+            <button
+              className={`rounded px-3 py-1 text-sm ${viewMode === "grid" ? "bg-black/10 font-semibold" : "hover:bg-black/5"}`}
+              onClick={() => setViewMode("grid")}
+            >
+              Grid
+            </button>
+          </div>
+          <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={loadAll}>Refresh</button>
+        </div>
       </div>
 
       <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
@@ -400,118 +417,231 @@ export default function GeneralTasksPage() {
 
       <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold text-heading">Assigned To Me</div>
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filteredAssignedToMe.map((t) => {
-            const assigner = profiles.find((p) => p.user_id === t.created_by);
-            const attachmentsCount = (taskDocs[t.id] || []).length;
-            const statusLabel =
-              t.status === "in_progress"
-                ? "In Progress"
-                : t.status === "completed"
-                  ? "Completed"
-                  : t.status === "cancelled"
-                    ? "Cancelled"
-                    : "Open";
-            const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
-            return (
-              <Link
-                key={t.id}
-                href={`/general/tasks/${t.id}`}
-                className="block rounded-xl border border-black/10 bg-white p-4 shadow-sm hover:bg-black/[0.02]"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-heading truncate">{t.title}</div>
-                    <div className="mt-1 text-xs text-black/60">
-                      {statusLabel} • {dueText}
-                      {assigner ? ` • Assigned by: ${assigner.display_name || assigner.user_id}` : ""}
+        {viewMode === "grid" ? (
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredAssignedToMe.map((t) => {
+              const assigner = profiles.find((p) => p.user_id === t.created_by);
+              const attachmentsCount = (taskDocs[t.id] || []).length;
+              const statusLabel =
+                t.status === "in_progress"
+                  ? "In Progress"
+                  : t.status === "completed"
+                    ? "Completed"
+                    : t.status === "cancelled"
+                      ? "Cancelled"
+                      : "Open";
+              const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
+              return (
+                <Link
+                  key={t.id}
+                  href={`/general/tasks/${t.id}`}
+                  className="block rounded-xl border border-black/10 bg-white p-4 shadow-sm hover:bg-black/[0.02]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-heading truncate">{t.title}</div>
+                      <div className="mt-1 text-xs text-black/60">
+                        {statusLabel} • {dueText}
+                        {assigner ? ` • Assigned by: ${assigner.display_name || assigner.user_id}` : ""}
+                      </div>
+                    </div>
+                    <div className="shrink-0 rounded-md border border-black/10 px-2 py-1 text-xs text-black/70">
+                      {attachmentsCount} files
                     </div>
                   </div>
-                  <div className="shrink-0 rounded-md border border-black/10 px-2 py-1 text-xs text-black/70">
-                    {attachmentsCount} files
+                  <div className="mt-3 text-sm text-black/80">
+                    {(t.description || "").trim() ? (
+                      <div className="line-clamp-3">{t.description}</div>
+                    ) : (
+                      <div className="text-black/60">No description.</div>
+                    )}
                   </div>
-                </div>
-                <div className="mt-3 text-sm text-black/80">
-                  {(t.description || "").trim() ? (
-                    <div className="line-clamp-3">{t.description}</div>
-                  ) : (
-                    <div className="text-black/60">No description.</div>
-                  )}
-                </div>
-              </Link>
-            );
-          })}
-          {filteredAssignedToMe.length === 0 && <div className="text-sm text-black/60">No tasks assigned.</div>}
-        </div>
+                </Link>
+              );
+            })}
+            {filteredAssignedToMe.length === 0 && <div className="text-sm text-black/60">No tasks assigned.</div>}
+          </div>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-black/10 text-black/60">
+                  <th className="py-2 font-medium">Title</th>
+                  <th className="py-2 font-medium">Status</th>
+                  <th className="py-2 font-medium">Due</th>
+                  <th className="py-2 font-medium">Assigned By</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/5">
+                {filteredAssignedToMe.map((t) => {
+                  const assigner = profiles.find((p) => p.user_id === t.created_by);
+                  const statusLabel =
+                    t.status === "in_progress"
+                      ? "In Progress"
+                      : t.status === "completed"
+                        ? "Completed"
+                        : t.status === "cancelled"
+                          ? "Cancelled"
+                          : "Open";
+                  const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "-";
+                  return (
+                    <tr key={t.id} className="hover:bg-black/[0.02]">
+                      <td className="py-2">
+                        <Link href={`/general/tasks/${t.id}`} className="font-semibold text-heading hover:underline">
+                          {t.title}
+                        </Link>
+                      </td>
+                      <td className="py-2">{statusLabel}</td>
+                      <td className="py-2">{dueText}</td>
+                      <td className="py-2">{assigner ? assigner.display_name || assigner.user_id : "-"}</td>
+                    </tr>
+                  );
+                })}
+                {filteredAssignedToMe.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-4 text-center text-black/60">
+                      No tasks assigned.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold text-heading">Assigned By Me</div>
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filteredAssignedByMe.map((t) => {
-            const assignee = profiles.find((p) => p.user_id === t.assignee_id);
-            const attachmentsCount = (taskDocs[t.id] || []).length;
-            const statusLabel =
-              t.status === "in_progress"
-                ? "In Progress"
-                : t.status === "completed"
-                  ? "Completed"
-                  : t.status === "cancelled"
-                    ? "Cancelled"
-                    : "Open";
-            const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
-            return (
-              <Link
-                key={t.id}
-                href={`/general/tasks/${t.id}`}
-                className="block rounded-xl border border-black/10 bg-white p-4 shadow-sm hover:bg-black/[0.02]"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-heading truncate">{t.title}</div>
-                    <div className="mt-1 text-xs text-black/60">
-                      {statusLabel} • {dueText}
-                      {assignee ? ` • Assigned to: ${assignee.display_name || assignee.user_id}` : ""}
+        {viewMode === "grid" ? (
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredAssignedByMe.map((t) => {
+              const assignee = profiles.find((p) => p.user_id === t.assignee_id);
+              const attachmentsCount = (taskDocs[t.id] || []).length;
+              const statusLabel =
+                t.status === "in_progress"
+                  ? "In Progress"
+                  : t.status === "completed"
+                    ? "Completed"
+                    : t.status === "cancelled"
+                      ? "Cancelled"
+                      : "Open";
+              const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
+              return (
+                <Link
+                  key={t.id}
+                  href={`/general/tasks/${t.id}`}
+                  className="block rounded-xl border border-black/10 bg-white p-4 shadow-sm hover:bg-black/[0.02]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-heading truncate">{t.title}</div>
+                      <div className="mt-1 text-xs text-black/60">
+                        {statusLabel} • {dueText}
+                        {assignee ? ` • Assigned to: ${assignee.display_name || assignee.user_id}` : ""}
+                      </div>
+                    </div>
+                    <div className="shrink-0 rounded-md border border-black/10 px-2 py-1 text-xs text-black/70">
+                      {attachmentsCount} files
                     </div>
                   </div>
-                  <div className="shrink-0 rounded-md border border-black/10 px-2 py-1 text-xs text-black/70">
-                    {attachmentsCount} files
+                  <div className="mt-3 text-sm text-black/80">
+                    {(t.description || "").trim() ? (
+                      <div className="line-clamp-3">{t.description}</div>
+                    ) : (
+                      <div className="text-black/60">No description.</div>
+                    )}
                   </div>
-                </div>
-                <div className="mt-3 text-sm text-black/80">
-                  {(t.description || "").trim() ? (
-                    <div className="line-clamp-3">{t.description}</div>
-                  ) : (
-                    <div className="text-black/60">No description.</div>
-                  )}
-                </div>
-                <div className="mt-3 flex items-center justify-end gap-2">
-                  <button
-                    className="rounded-md border border-black/10 px-3 py-1 text-sm hover:bg-black/5"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      openEdit(t);
-                    }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    className="rounded-md border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700 hover:bg-red-100"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      deleteTask(t);
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </Link>
-            );
-          })}
-          {filteredAssignedByMe.length === 0 && <div className="text-sm text-black/60">No tasks assigned by you.</div>}
-        </div>
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    <button
+                      className="rounded-md border border-black/10 px-3 py-1 text-sm hover:bg-black/5"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openEdit(t);
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="rounded-md border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700 hover:bg-red-100"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        deleteTask(t);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </Link>
+              );
+            })}
+            {filteredAssignedByMe.length === 0 && <div className="text-sm text-black/60">No tasks assigned by you.</div>}
+          </div>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-black/10 text-black/60">
+                  <th className="py-2 font-medium">Title</th>
+                  <th className="py-2 font-medium">Status</th>
+                  <th className="py-2 font-medium">Due</th>
+                  <th className="py-2 font-medium">Assigned To</th>
+                  <th className="py-2 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/5">
+                {filteredAssignedByMe.map((t) => {
+                  const assignee = profiles.find((p) => p.user_id === t.assignee_id);
+                  const statusLabel =
+                    t.status === "in_progress"
+                      ? "In Progress"
+                      : t.status === "completed"
+                        ? "Completed"
+                        : t.status === "cancelled"
+                          ? "Cancelled"
+                          : "Open";
+                  const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "-";
+                  return (
+                    <tr key={t.id} className="hover:bg-black/[0.02]">
+                      <td className="py-2">
+                        <Link href={`/general/tasks/${t.id}`} className="font-semibold text-heading hover:underline">
+                          {t.title}
+                        </Link>
+                      </td>
+                      <td className="py-2">{statusLabel}</td>
+                      <td className="py-2">{dueText}</td>
+                      <td className="py-2">{assignee ? assignee.display_name || assignee.user_id : "-"}</td>
+                      <td className="py-2 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            className="rounded-md border border-black/10 px-2 py-1 text-xs hover:bg-black/5"
+                            onClick={() => openEdit(t)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700 hover:bg-red-100"
+                            onClick={() => deleteTask(t)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredAssignedByMe.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-4 text-center text-black/60">
+                      No tasks assigned by you.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {editingTask && (
