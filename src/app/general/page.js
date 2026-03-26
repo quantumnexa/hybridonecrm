@@ -86,6 +86,7 @@ export default function GeneralTasksPage() {
     return b ? { from: b.from.toISOString(), to: b.to.toISOString() } : { from: "", to: "" };
   });
   const [query, setQuery] = useState("");
+  const [statusTab, setStatusTab] = useState("all");
   const [viewMode, setViewMode] = useState("grid");
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -151,26 +152,30 @@ export default function GeneralTasksPage() {
   }, [profiles]);
 
   const filteredAssignedToMe = useMemo(() => {
+    const statusFiltered =
+      statusTab === "all" ? tasks : (tasks || []).filter((t) => String(t.status || "open") === statusTab);
     const q = (query || "").trim().toLowerCase();
-    if (!q) return tasks;
-    return (tasks || []).filter((t) => {
+    if (!q) return statusFiltered;
+    return (statusFiltered || []).filter((t) => {
       const title = String(t.title || "").toLowerCase();
       const desc = String(t.description || "").toLowerCase();
       const assigner = String(profileMap[t.created_by] || "").toLowerCase();
       return title.includes(q) || desc.includes(q) || assigner.includes(q);
     });
-  }, [tasks, query, profileMap]);
+  }, [tasks, statusTab, query, profileMap]);
 
   const filteredAssignedByMe = useMemo(() => {
+    const statusFiltered =
+      statusTab === "all" ? assignedByMe : (assignedByMe || []).filter((t) => String(t.status || "open") === statusTab);
     const q = (query || "").trim().toLowerCase();
-    if (!q) return assignedByMe;
-    return (assignedByMe || []).filter((t) => {
+    if (!q) return statusFiltered;
+    return (statusFiltered || []).filter((t) => {
       const title = String(t.title || "").toLowerCase();
       const desc = String(t.description || "").toLowerCase();
       const assignee = String(profileMap[t.assignee_id] || "").toLowerCase();
       return title.includes(q) || desc.includes(q) || assignee.includes(q);
     });
-  }, [assignedByMe, query, profileMap]);
+  }, [assignedByMe, statusTab, query, profileMap]);
 
   const createTask = async () => {
     if (!userId || !createForm.title.trim()) return;
@@ -373,6 +378,26 @@ export default function GeneralTasksPage() {
                 {i.label}
               </button>
             ))}
+            <div className="flex items-center rounded-md border border-black/10 bg-white p-1">
+              {[
+                { key: "all", label: "All" },
+                { key: "open", label: "Open" },
+                { key: "in_progress", label: "In Progress" },
+                { key: "completed", label: "Completed" },
+                { key: "cancelled", label: "Cancelled" },
+              ].map((s) => (
+                <button
+                  key={s.key}
+                  className={
+                    "rounded px-3 py-1 text-sm " +
+                    (statusTab === s.key ? "bg-black/10 font-semibold text-heading" : "text-black/70 hover:bg-black/5")
+                  }
+                  onClick={() => setStatusTab(s.key)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
             {preset === "custom" && (
               <div className="flex flex-wrap items-center gap-2">
                 <input

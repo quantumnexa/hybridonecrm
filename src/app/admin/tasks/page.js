@@ -81,6 +81,7 @@ export default function AdminTasksPage() {
     return b ? { from: b.from.toISOString(), to: b.to.toISOString() } : { from: "", to: "" };
   });
   const [query, setQuery] = useState("");
+  const [statusTab, setStatusTab] = useState("all");
   const [viewMode, setViewMode] = useState("grid");
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -147,16 +148,18 @@ export default function AdminTasksPage() {
   }, [users]);
 
   const filteredTasks = useMemo(() => {
+    const statusFiltered =
+      statusTab === "all" ? tasks : (tasks || []).filter((t) => String(t.status || "open") === statusTab);
     const q = (query || "").trim().toLowerCase();
-    if (!q) return tasks;
-    return (tasks || []).filter((t) => {
+    if (!q) return statusFiltered;
+    return (statusFiltered || []).filter((t) => {
       const title = String(t.title || "").toLowerCase();
       const desc = String(t.description || "").toLowerCase();
       const assignee = String(userMap[t.assignee_id] || "").toLowerCase();
       const creator = String(userMap[t.created_by] || "").toLowerCase();
       return title.includes(q) || desc.includes(q) || assignee.includes(q) || creator.includes(q);
     });
-  }, [tasks, query, userMap]);
+  }, [tasks, statusTab, query, userMap]);
 
   const createTask = async () => {
     if (!createForm.title.trim()) return;
@@ -364,6 +367,26 @@ export default function AdminTasksPage() {
                   {i.label}
                 </button>
               ))}
+              <div className="flex items-center rounded-md border border-black/10 bg-white p-1">
+                {[
+                  { key: "all", label: "All" },
+                  { key: "open", label: "Open" },
+                  { key: "in_progress", label: "In Progress" },
+                  { key: "completed", label: "Completed" },
+                  { key: "cancelled", label: "Cancelled" },
+                ].map((s) => (
+                  <button
+                    key={s.key}
+                    className={
+                      "rounded px-3 py-1 text-sm " +
+                      (statusTab === s.key ? "bg-black/10 font-semibold text-heading" : "text-black/70 hover:bg-black/5")
+                    }
+                    onClick={() => setStatusTab(s.key)}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
               {preset === "custom" && (
                 <div className="flex flex-wrap items-center gap-2">
                   <input
