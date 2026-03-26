@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
-import { formatMinutesAsHHMM } from "@/lib/timeFormat";
+import { formatMinutesAsHHMM, formatDateCustom } from "@/lib/timeFormat";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -419,7 +419,7 @@ export default function Page() {
         <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h1 className="text-heading text-2xl font-bold">Reports & Analytics</h1>
-            <div className="mt-1 text-xs text-black/60">Range: {bounds.from ? bounds.from.slice(0, 10) : "-"} → {bounds.to ? bounds.to.slice(0, 10) : "-"}{!orgId ? " • All orgs" : ""}</div>
+            <div className="mt-1 text-xs text-black/60">Range: {bounds.from ? formatDateCustom(bounds.from) : "-"} → {bounds.to ? formatDateCustom(bounds.to) : "-"}{!orgId ? " • All orgs" : ""}</div>
           </div>
           <button className="rounded-md border border-black/10 bg-white px-3 py-2 text-sm hover:bg-black/5" onClick={() => setReloadKey((k) => k + 1)}>
             Refresh

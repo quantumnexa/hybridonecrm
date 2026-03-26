@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
+import { formatLocalDateTime12 } from "@/lib/timeFormat";
 
 export default function AppointmentsPage() {
   const [appointments, setAppointments] = useState([]);
@@ -297,7 +298,7 @@ export default function AppointmentsPage() {
                         <>
                           <div className="text-sm font-semibold">{a.title || "Appointment"}</div>
                           <div className="text-xs text-black/60">
-                            {new Date(a.scheduled_at).toLocaleString()} • {(actorLabels[a.created_by] || "Unknown")} • {(assigneeLabels[lead?.sales_person] || "Unassigned")}
+                            {formatLocalDateTime12(a.scheduled_at)} • {(actorLabels[a.created_by] || "Unknown")} • {(assigneeLabels[lead?.sales_person] || "Unassigned")}
                           </div>
                           {a.notes && <div className="text-sm">{a.notes}</div>}
                           {lead && (

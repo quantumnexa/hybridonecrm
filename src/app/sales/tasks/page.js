@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
 import Link from "next/link";
+import { formatLocalDateTime12 } from "@/lib/timeFormat";
 
 export default function SalesTasksPage() {
   const [tasks, setTasks] = useState([]);
@@ -166,7 +167,7 @@ export default function SalesTasksPage() {
                     : t.status === "cancelled"
                       ? "Cancelled"
                       : "Open";
-              const dueText = t.due_at ? new Date(t.due_at).toLocaleString() : "No deadline";
+              const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
               return (
                 <Link
                   key={t.id}

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
-import { formatMinutesAsHHMM } from "@/lib/timeFormat";
+import { formatSecondsAsHHMMSS, formatLocalDateTime12, formatDateCustom } from "@/lib/timeFormat";
 
 function localDateKey(d) {
   const x = d instanceof Date ? d : new Date(d);
@@ -84,6 +84,9 @@ export default function AdminAttendancePage() {
   const [error, setError] = useState("");
   const [showPresentOnly, setShowPresentOnly] = useState(false);
   const [query, setQuery] = useState("");
+  const [nowTs, setNowTs] = useState(0);
+  const [assignments, setAssignments] = useState([]);
+  const [shifts, setShifts] = useState([]);
 
   const initialToday = useMemo(() => {
     const b = boundsForPreset("today");
@@ -169,6 +172,21 @@ export default function AdminAttendancePage() {
       return;
     }
     setSessions(ws || []);
+
+    const { data: asg } = await supabase
+      .from("shift_assignments")
+      .select("user_id, work_date, shift_id")
+      .gte("work_date", fromKey)
+      .lte("work_date", toKey)
+      .in("user_id", ids);
+    setAssignments(asg || []);
+    const shiftIds = Array.from(new Set((asg || []).map(a => a.shift_id).filter(Boolean)));
+    let shMap = [];
+    if (shiftIds.length) {
+      const { data: sh } = await supabase.from("shifts").select("*").in("id", shiftIds);
+      shMap = sh || [];
+    }
+    setShifts(shMap);
     setLoading(false);
   }, [bounds.from, bounds.to]);
 
@@ -178,6 +196,15 @@ export default function AdminAttendancePage() {
     };
     init();
   }, [loadAll]);
+
+  useEffect(() => {
+    const kick = setTimeout(() => setNowTs(Date.now()), 0);
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => {
+      clearTimeout(kick);
+      clearInterval(id);
+    };
+  }, []);
 
   const rangeInfo = useMemo(() => {
     const from = startOfDay(new Date(bounds.from));
@@ -189,7 +216,14 @@ export default function AdminAttendancePage() {
   }, [bounds.from, bounds.to]);
 
   const rows = useMemo(() => {
-    const now = new Date();
+    const now = new Date(nowTs);
+    const shiftsById = new Map((shifts || []).map(s => [s.id, s]));
+    const assignByUserDate = new Map();
+    (assignments || []).forEach(a => {
+      if (!a.user_id || !a.work_date) return;
+      if (!assignByUserDate.has(a.user_id)) assignByUserDate.set(a.user_id, new Map());
+      assignByUserDate.get(a.user_id).set(String(a.work_date), a);
+    });
     const byUser = new Map();
     (sessions || []).forEach((s) => {
       if (!s.user_id) return;
@@ -199,29 +233,75 @@ export default function AdminAttendancePage() {
 
     const items = (profiles || []).map((p) => {
       const arr = byUser.get(p.user_id) || [];
+      const byDate = new Map();
+      arr.forEach(s => {
+        const k = String(s.work_date || (s.login_at ? String(s.login_at).slice(0,10) : ""));
+        if (!byDate.has(k)) byDate.set(k, []);
+        byDate.get(k).push(s);
+      });
+
       const presentDays = new Set();
-      let minutes = 0;
+      let seconds = 0;
       let firstIn = null;
       let lastOut = null;
       let activeLoginAt = null;
 
-      arr.forEach((s) => {
-        const d = s.work_date || (s.login_at ? String(s.login_at).slice(0, 10) : "");
-        if (d) presentDays.add(d);
+      // Iterate each day in range and compute overlap within shift windows
+      for (let d = new Date(rangeInfo.from); d < rangeInfo.to; d = addDays(d, 1)) {
+        const key = localDateKey(d);
+        const a = assignByUserDate.get(p.user_id)?.get(key) || null;
+        const sh = a?.shift_id ? shiftsById.get(a.shift_id) : null;
+        const sessionsToday = byDate.get(key) || [];
+        const nextKey = localDateKey(addDays(d, 1));
+        const sessionsNext = byDate.get(nextKey) || [];
 
-        minutes += Number(s.duration_minutes || 0);
-        const li = s.login_at ? new Date(s.login_at) : null;
-        const lo = s.logout_at ? new Date(s.logout_at) : null;
-        if (li && (!firstIn || li < firstIn)) firstIn = li;
-        if (lo && (!lastOut || lo > lastOut)) lastOut = lo;
-        if (!s.logout_at && li && (!activeLoginAt || li > activeLoginAt)) activeLoginAt = li;
-      });
-
-      if (activeLoginAt) {
-        const start = new Date(Math.max(activeLoginAt.getTime(), rangeInfo.from.getTime()));
-        const end = new Date(Math.min(now.getTime(), rangeInfo.to.getTime()));
-        if (end > start) {
-          minutes += Math.max(0, Math.floor((end.getTime() - start.getTime()) / 60000));
+        // If shift exists, measure overlap in its window; else fallback to raw
+        if (sh) {
+          const [shh, sm] = String(sh.start_time || "09:00").split(":").map(x => Number(x || 0));
+          const [ehh, em] = String(sh.end_time || "18:00").split(":").map(x => Number(x || 0));
+          const segs = [];
+          const startTs = new Date(`${key}T${String(shh).padStart(2,"0")}:${String(sm).padStart(2,"0")}:00`).getTime();
+          const endSame = new Date(`${key}T${String(ehh).padStart(2,"0")}:${String(em).padStart(2,"0")}:00`).getTime();
+          if (!sh.is_night) {
+            segs.push([startTs, endSame]);
+          } else {
+            const nextStart = new Date(`${nextKey}T00:00:00`).getTime();
+            const nextEnd = new Date(`${nextKey}T${String(ehh).padStart(2,"0")}:${String(em).padStart(2,"0")}:00`).getTime();
+            segs.push([startTs, Math.max(startTs, new Date(`${key}T23:59:59`).getTime() + 1000)]);
+            segs.push([nextStart, nextEnd]);
+          }
+          const clamp = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
+          const addFrom = (list, s1, s2) => {
+            list.forEach(row => {
+              const li = row.login_at ? new Date(row.login_at).getTime() : null;
+              const lo = row.logout_at ? new Date(row.logout_at).getTime() : null;
+              const endTs = lo || now.getTime();
+              const startTs2 = li || s1;
+              const ov = clamp(startTs2, endTs, s1, s2);
+              if (ov > 0) {
+                seconds += Math.floor(ov / 1000);
+                const liD = row.login_at ? new Date(row.login_at) : null;
+                const loD = row.logout_at ? new Date(row.logout_at) : null;
+                if (liD && (!firstIn || liD < firstIn)) firstIn = liD;
+                if (loD && (!lastOut || loD > lastOut)) lastOut = loD;
+                presentDays.add(key);
+                if (!row.logout_at && li) activeLoginAt = li;
+              }
+            });
+          };
+          addFrom(sessionsToday, segs[0][0], segs[0][1]);
+          if (sh.is_night) addFrom(sessionsNext, segs[1][0], segs[1][1]);
+        } else {
+          // Fallback: raw sessions for the day
+          sessionsToday.forEach(row => {
+            seconds += Number(row.duration_minutes || 0) * 60;
+            const li = row.login_at ? new Date(row.login_at) : null;
+            const lo = row.logout_at ? new Date(row.logout_at) : null;
+            if (li && (!firstIn || li < firstIn)) firstIn = li;
+            if (lo && (!lastOut || lo > lastOut)) lastOut = lo;
+            presentDays.add(key);
+            if (!row.logout_at && li) activeLoginAt = li;
+          });
         }
       }
 
@@ -237,21 +317,21 @@ export default function AdminAttendancePage() {
         presentDays: presentDaysCount,
         absentDays,
         firstIn,
-        lastOut,
-        minutes,
+        lastOut: present ? null : lastOut,
+        seconds,
       };
     });
 
     const filtered = showPresentOnly ? items.filter((r) => r.present) : items;
-    return filtered.sort((a, b) => Number(b.present) - Number(a.present) || (b.minutes || 0) - (a.minutes || 0));
-  }, [profiles, sessions, showPresentOnly, rangeInfo.from, rangeInfo.to, rangeInfo.days]);
+    return filtered.sort((a, b) => Number(b.present) - Number(a.present) || (b.seconds || 0) - (a.seconds || 0));
+  }, [profiles, sessions, assignments, shifts, showPresentOnly, rangeInfo.from, rangeInfo.to, rangeInfo.days, nowTs]);
 
   const presentNowCount = useMemo(() => rows.filter((r) => r.present).length, [rows]);
-  const totalMinutes = useMemo(() => rows.reduce((sum, r) => sum + Number(r.minutes || 0), 0), [rows]);
+  const totalSeconds = useMemo(() => rows.reduce((sum, r) => sum + Number(r.seconds || 0), 0), [rows]);
   const totalEmployees = useMemo(() => rows.length, [rows]);
   const totalPresentDays = useMemo(() => rows.reduce((sum, r) => sum + Number(r.presentDays || 0), 0), [rows]);
   const totalAbsentDays = useMemo(() => rows.reduce((sum, r) => sum + Number(r.absentDays || 0), 0), [rows]);
-  const avgMinutes = useMemo(() => (totalEmployees ? Math.floor(totalMinutes / totalEmployees) : 0), [totalEmployees, totalMinutes]);
+  const avgSeconds = useMemo(() => (totalEmployees ? Math.floor(totalSeconds / totalEmployees) : 0), [totalEmployees, totalSeconds]);
 
   const filteredRows = useMemo(() => {
     const q = (query || "").trim().toLowerCase();
@@ -270,7 +350,7 @@ export default function AdminAttendancePage() {
           <div>
             <h1 className="text-heading text-2xl font-bold">Attendance</h1>
             <div className="mt-1 text-xs text-black/60">
-              {rangeInfo.fromKey} → {rangeInfo.toKey} • {rangeInfo.days} days
+              {formatDateCustom(rangeInfo.from)} → {formatDateCustom(addDays(rangeInfo.to, -1))} • {rangeInfo.days} days
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -296,8 +376,8 @@ export default function AdminAttendancePage() {
           </div>
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
             <div className="text-xs text-black/60">Hours Worked</div>
-            <div className="mt-2 text-2xl font-semibold text-heading">{formatMinutesAsHHMM(totalMinutes)}</div>
-            <div className="mt-1 text-xs text-black/60">avg {formatMinutesAsHHMM(avgMinutes)} / employee</div>
+            <div className="mt-2 text-2xl font-semibold text-heading">{formatSecondsAsHHMMSS(totalSeconds)}</div>
+            <div className="mt-1 text-xs text-black/60">avg {formatSecondsAsHHMMSS(avgSeconds)} / employee</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
             <div className="text-xs text-black/60">Present Days</div>
@@ -393,8 +473,8 @@ export default function AdminAttendancePage() {
                     <th className="px-4 py-3 text-left">Now</th>
                     <th className="px-4 py-3 text-right">Present</th>
                     <th className="px-4 py-3 text-right">Absent</th>
-                    <th className="px-4 py-3 text-left">First Login</th>
-                    <th className="px-4 py-3 text-left">Last Logout</th>
+                    <th className="px-4 py-3 text-left">Login</th>
+                    <th className="px-4 py-3 text-left">Logout</th>
                     <th className="px-4 py-3 text-right">Hours</th>
                     <th className="px-4 py-3 text-right">Action</th>
                   </tr>
@@ -417,9 +497,9 @@ export default function AdminAttendancePage() {
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">{r.presentDays}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{r.absentDays}</td>
-                      <td className="px-4 py-3">{r.firstIn ? r.firstIn.toLocaleString() : "-"}</td>
-                      <td className="px-4 py-3">{r.lastOut ? r.lastOut.toLocaleString() : "-"}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{formatMinutesAsHHMM(r.minutes)}</td>
+                      <td className="px-4 py-3">{r.firstIn ? formatLocalDateTime12(r.firstIn) : "-"}</td>
+                      <td className="px-4 py-3">{r.lastOut ? formatLocalDateTime12(r.lastOut) : "-"}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{formatSecondsAsHHMMSS(r.seconds)}</td>
                       <td className="px-4 py-3 text-right">
                         <Link href={`/admin/users/${r.user_id}`} className="rounded-md border border-black/10 px-3 py-1 hover:bg-black/5">
                           View

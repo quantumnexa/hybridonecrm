@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
+import { formatDateCustom } from "@/lib/timeFormat";
 
 export default function Page() {
   const [quotes, setQuotes] = useState([]);
@@ -178,7 +179,7 @@ export default function Page() {
             <img class="logo" src="/hybrid%20logo.webp" alt="Company Logo" />
             <div>
               <div style="font-size:14px;font-weight:bold;">Quotation</div>
-              <div style="color:#555;">${new Date().toLocaleDateString()}</div>
+              <div style="color:#555;">${formatDateCustom(new Date())}</div>
             </div>
           </div>
           <h1>Quotation: ${q.title}</h1>

@@ -11,6 +11,7 @@ export default function SalesLayout({ children }) {
             { href: "/sales/dashboard", label: "Dashboard", icon: "dashboard" },
             { href: "/sales/tasks", label: "Tasks", icon: "tasks" },
             { href: "/sales/notes", label: "My Notes", icon: "profile" },
+            { href: "/sales/shifts", label: "My Shifts", icon: "appointments" },
             { href: "/sales/leads", label: "Leads", icon: "leads" },
             { href: "/sales/appointments", label: "Appointment", icon: "appointments" },
             { href: "/sales/projects", label: "Projects", icon: "projects" },

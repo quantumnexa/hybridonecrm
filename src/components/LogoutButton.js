@@ -1,15 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { supabase, endWorkSession, getUserCached } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 export default function LogoutButton({ className = "", collapsed = false }) {
   const router = useRouter();
   const onClick = async () => {
-    const u = await getUserCached();
-    if (u?.id) {
-      await endWorkSession({ userId: u.id });
-    }
     await supabase.auth.signOut();
     router.replace("/");
   };

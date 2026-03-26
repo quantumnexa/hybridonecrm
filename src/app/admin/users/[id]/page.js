@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
 import Link from "next/link";
-import { formatMinutesAsHHMM } from "@/lib/timeFormat";
+import { formatMinutesAsHHMM, formatLocalDateTime12, formatLocalTime12, formatDateCustom } from "@/lib/timeFormat";
 
 export default function UserDetailPage() {
   const { id } = useParams();
@@ -257,7 +257,7 @@ export default function UserDetailPage() {
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-heading">Updates</div>
             <div className="mt-3 text-3xl font-bold">{stats.updatesCount}</div>
-            <div className="mt-2 text-xs text-black/60">{stats.lastUpdate ? `Last: ${new Date(stats.lastUpdate).toLocaleString()}` : "No updates yet"}</div>
+            <div className="mt-2 text-xs text-black/60">{stats.lastUpdate ? `Last: ${formatLocalDateTime12(stats.lastUpdate)}` : "No updates yet"}</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-heading">Profile</div>
@@ -273,8 +273,8 @@ export default function UserDetailPage() {
             <div className="text-sm font-semibold text-heading">Work Hours (Today)</div>
             <div className="mt-3 text-3xl font-bold">{todaySummary ? formatMinutesAsHHMM(todaySummary.minutes) : "00:00"}</div>
             <div className="mt-2 text-xs text-black/60">
-              In: {todaySummary?.firstIn ? todaySummary.firstIn.toLocaleTimeString() : "-"} • Out:{" "}
-              {todaySummary?.lastOut ? todaySummary.lastOut.toLocaleTimeString() : "-"}
+              In: {todaySummary?.firstIn ? formatLocalTime12(todaySummary.firstIn) : "-"} • Out:{" "}
+              {todaySummary?.lastOut ? formatLocalTime12(todaySummary.lastOut) : "-"}
             </div>
           </div>
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm md:col-span-2">
@@ -292,9 +292,9 @@ export default function UserDetailPage() {
                 <tbody>
                   {workByDay.slice(0, 14).map((d) => (
                     <tr key={d.date} className="border-t">
-                      <td className="px-3 py-2">{d.date}</td>
-                      <td className="px-3 py-2">{d.firstIn ? d.firstIn.toLocaleString() : "-"}</td>
-                      <td className="px-3 py-2">{d.lastOut ? d.lastOut.toLocaleString() : "-"}</td>
+                      <td className="px-3 py-2">{formatDateCustom(d.date)}</td>
+                      <td className="px-3 py-2">{d.firstIn ? formatLocalTime12(d.firstIn) : "-"}</td>
+                      <td className="px-3 py-2">{d.lastOut ? formatLocalTime12(d.lastOut) : "-"}</td>
                       <td className="px-3 py-2 text-right">{formatMinutesAsHHMM(d.minutes)}</td>
                     </tr>
                   ))}

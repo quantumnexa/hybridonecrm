@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase, getUserCached } from "@/lib/supabase";
 import Link from "next/link";
+import { formatLocalDateTime12 } from "@/lib/timeFormat";
+import ClockWidget from "@/components/ClockWidget";
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -304,6 +306,7 @@ export default function GeneralTasksPage() {
 
   return (
     <div className="space-y-6">
+      <ClockWidget />
       <div className="flex items-center justify-between">
         <h1 className="text-heading text-2xl font-bold">Tasks</h1>
         <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={loadAll}>Refresh</button>
@@ -409,7 +412,7 @@ export default function GeneralTasksPage() {
                   : t.status === "cancelled"
                     ? "Cancelled"
                     : "Open";
-            const dueText = t.due_at ? new Date(t.due_at).toLocaleString() : "No deadline";
+            const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
             return (
               <Link
                 key={t.id}
@@ -456,7 +459,7 @@ export default function GeneralTasksPage() {
                   : t.status === "cancelled"
                     ? "Cancelled"
                     : "Open";
-            const dueText = t.due_at ? new Date(t.due_at).toLocaleString() : "No deadline";
+            const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
             return (
               <Link
                 key={t.id}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase, supabaseConfigured, startWorkSession } from "@/lib/supabase";
+import { supabase, supabaseConfigured } from "@/lib/supabase";
 
 export default function AuthGuard({ allowedRoles, children }) {
   const router = useRouter();
@@ -45,9 +45,6 @@ export default function AuthGuard({ allowedRoles, children }) {
           );
           return;
         }
-        setTimeout(() => {
-          startWorkSession({ userId: session.user.id, role });
-        }, 0);
         setReady(true);
       })
       .catch((e) => {

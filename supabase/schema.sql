@@ -251,6 +251,60 @@ create index if not exists work_sessions_user_date_idx on public.work_sessions(u
 create index if not exists work_sessions_date_idx on public.work_sessions(work_date);
 create index if not exists work_sessions_org_idx on public.work_sessions(org_id);
 
+-- Shifts (definitions)
+create table if not exists public.shifts (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete set null,
+  name text not null,
+  start_time time not null,
+  end_time time not null,
+  is_night boolean default false,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz default now()
+);
+alter table public.shifts disable row level security;
+create index if not exists shifts_org_idx on public.shifts(org_id);
+create index if not exists shifts_start_end_idx on public.shifts(start_time, end_time);
+
+-- Per-day shift assignments
+create table if not exists public.shift_assignments (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid references public.organizations(id) on delete set null,
+  user_id uuid references auth.users(id) on delete cascade,
+  shift_id uuid references public.shifts(id) on delete set null,
+  work_date date not null,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz default now()
+);
+alter table public.shift_assignments disable row level security;
+create unique index if not exists shift_assignments_unique_user_day on public.shift_assignments(user_id, work_date);
+create index if not exists shift_assignments_org_idx on public.shift_assignments(org_id);
+create index if not exists shift_assignments_user_idx on public.shift_assignments(user_id);
+create index if not exists shift_assignments_date_idx on public.shift_assignments(work_date);
+
+create or replace function public.enforce_shift_assignment_hire_date()
+returns trigger
+language plpgsql
+as $$
+begin
+  if exists (
+    select 1
+    from public.profiles p
+    where p.user_id = new.user_id
+      and new.work_date < date(p.created_at)
+  ) then
+    raise exception 'Cannot assign shift before hire date';
+  end if;
+  return new;
+end
+$$;
+
+drop trigger if exists enforce_shift_assignment_hire_date_trg on public.shift_assignments;
+create trigger enforce_shift_assignment_hire_date_trg
+before insert or update on public.shift_assignments
+for each row
+execute function public.enforce_shift_assignment_hire_date();
+
 -- Daily reports (end-of-day logs by general users)
 create table if not exists public.daily_reports (
   id uuid primary key default gen_random_uuid(),

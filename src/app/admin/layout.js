@@ -16,6 +16,7 @@ export default function AdminLayout({ children }) {
             { href: "/admin/quotation", label: "Quotation", icon: "quotation" },
             { href: "/admin/users", label: "User management", icon: "users" },
             { href: "/admin/attendance", label: "Attendance", icon: "reports" },
+            { href: "/admin/shifts", label: "Shifts", icon: "settings" },
             { href: "/admin/reports", label: "Reports & Analytics", icon: "reports" },
             { href: "/admin/daily-reports", label: "Daily Reports", icon: "tasks" },
           ]}

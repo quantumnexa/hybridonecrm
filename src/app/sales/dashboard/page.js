@@ -2,7 +2,9 @@
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
 import Link from "next/link";
+import { formatLocalDateTime12 } from "@/lib/timeFormat";
 import { useEffect, useMemo, useState } from "react";
+import ClockWidget from "@/components/ClockWidget";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -103,6 +105,7 @@ export default function Page() {
   return (
     <AuthGuard allowedRoles={["sales"]}>
       <div className="space-y-6">
+        <ClockWidget />
         <div className="flex items-center justify-between">
           <h1 className="text-heading text-2xl font-bold">Dashboard</h1>
           <div className="flex items-center gap-2">
@@ -193,7 +196,7 @@ export default function Page() {
               <div key={l.id} className="flex items-center justify-between rounded-md border border-black/10 p-3">
                 <div className="min-w-0">
                   <div className="text-sm font-semibold truncate">{l.name || "Unnamed"}</div>
-                  <div className="text-xs text-black/60 truncate">{l.status} • {new Date(l.created_at).toLocaleString()} {l.source ? `• ${l.source}` : ""}</div>
+                  <div className="text-xs text-black/60 truncate">{l.status} • {formatLocalDateTime12(l.created_at)} {l.source ? `• ${l.source}` : ""}</div>
                 </div>
                 <div className="shrink-0">
                   <Link href={`/sales/leads/${l.id}`} className="rounded-md bg-heading px-3 py-1 text-background hover:bg-hover">View</Link>

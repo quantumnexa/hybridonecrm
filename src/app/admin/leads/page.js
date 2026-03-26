@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { formatLocalDateTime12 } from "@/lib/timeFormat";
 
 function Filters({ onChange, salesProfiles = [] }) {
   const [state, setState] = useState({
@@ -420,7 +421,7 @@ function DetailDrawer({ lead, onClose, userId }) {
             <div className="text-sm font-semibold text-heading">Activity Timeline</div>
             <div className="mt-3 space-y-2">
               {activities.map((ev) => {
-                const when = new Date(ev.created_at).toLocaleString();
+                const when = formatLocalDateTime12(ev.created_at);
                 const t = ev.type;
                 const m = ev.meta || {};
                 const roleWords = ["sales","super_admin","lead_generator","appointment_setter","general_user"];
@@ -432,9 +433,9 @@ function DetailDrawer({ lead, onClose, userId }) {
                 if (t === "priority_changed") msg = `Priority changed: ${m.from || "-"} → ${m.to || "-"}`;
                 if (t === "assigned") msg = `Assigned to: ${m.assignee_label || assigneeLabels[m.assignee_id] || "Unknown"}`;
                 if (t === "followup_note") msg = `Followup note (${m.stage || "-" }): ${m.content || "-"}`;
-                if (t === "appointment_scheduled") msg = `Appointment scheduled: ${m.title || "-"} at ${new Date(m.when).toLocaleString()}`;
+                if (t === "appointment_scheduled") msg = `Appointment scheduled: ${m.title || "-"} at ${formatLocalDateTime12(m.when)}`;
                 if (t === "appointment_status_changed") msg = `Appointment status: ${m.status || "-"}`;
-                if (t === "appointment_updated") msg = `Appointment updated: ${m.title || "-"} at ${new Date(m.when).toLocaleString()}`;
+                if (t === "appointment_updated") msg = `Appointment updated: ${m.title || "-"} at ${formatLocalDateTime12(m.when)}`;
                 if (t === "appointment_deleted") msg = `Appointment deleted`;
                 return (
                   <div key={ev.id} className="rounded-md border border-black/10 p-2">
@@ -472,7 +473,7 @@ function DetailDrawer({ lead, onClose, userId }) {
             <div className="mt-3 space-y-2">
               {notes.map((n) => (
                 <div key={n.id} className="rounded-md border border-black/10 p-2">
-                  <div className="text-xs text-black/60">{new Date(n.created_at).toLocaleString()}</div>
+                  <div className="text-xs text-black/60">{formatLocalDateTime12(n.created_at)}</div>
                   <div className="text-sm">{n.content}</div>
                 </div>
               ))}

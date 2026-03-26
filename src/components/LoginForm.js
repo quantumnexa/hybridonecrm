@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase, supabaseConfigured, startWorkSession } from "@/lib/supabase";
+import { supabase, supabaseConfigured } from "@/lib/supabase";
 import Image from "next/image";
 
 export default function LoginForm() {
@@ -50,7 +50,6 @@ export default function LoginForm() {
         .maybeSingle();
       role = prof?.role || "sales";
     }
-    await startWorkSession({ userId: user.id, role });
     router.push(
       role === "super_admin"
         ? "/admin/dashboard"

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
+import ClockWidget from "@/components/ClockWidget";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -483,6 +484,7 @@ export default function Page() {
   return (
     <AuthGuard allowedRoles={["super_admin"]}>
       <div className="space-y-6">
+        <ClockWidget />
         <h1 className="text-heading text-2xl font-bold">Dashboard</h1>
 
         <section className="space-y-3">

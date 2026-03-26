@@ -10,6 +10,7 @@ export default function GeneralLayout({ children }) {
           items={[
             { href: "/general", label: "Tasks", icon: "tasks" },
             { href: "/general/notes", label: "My Notes", icon: "profile" },
+            { href: "/general/shifts", label: "My Shifts", icon: "appointments" },
             { href: "/general/profile", label: "Profile", icon: "profile" },
             { href: "/general/daily-reports", label: "Daily Reports", icon: "tasks" },
           ]}

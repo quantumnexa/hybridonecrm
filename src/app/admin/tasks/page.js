@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
 import Link from "next/link";
+import { formatDateCustom, formatLocalDateTime12 } from "@/lib/timeFormat";
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -261,7 +262,7 @@ export default function AdminTasksPage() {
             />
           </div>
           <div className="mt-2 text-xs text-black/60">
-            Filter by created date • {bounds.from ? bounds.from.slice(0, 10) : "-"} → {bounds.to ? bounds.to.slice(0, 10) : "-"}
+            Filter by created date • {bounds.from ? formatDateCustom(bounds.from) : "-"} → {bounds.to ? formatDateCustom(bounds.to) : "-"}
           </div>
         </div>
 
@@ -307,7 +308,7 @@ export default function AdminTasksPage() {
                     : t.status === "cancelled"
                       ? "Cancelled"
                       : "Open";
-              const dueText = t.due_at ? new Date(t.due_at).toLocaleString() : "No deadline";
+              const dueText = t.due_at ? formatLocalDateTime12(t.due_at) : "No deadline";
               return (
                 <Link
                   key={t.id}
