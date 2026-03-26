@@ -81,7 +81,8 @@ export default function AdminTasksPage() {
     return b ? { from: b.from.toISOString(), to: b.to.toISOString() } : { from: "", to: "" };
   });
   const [query, setQuery] = useState("");
-  const [viewMode, setViewMode] = useState("grid"); // 'grid' or 'list'
+  const [viewMode, setViewMode] = useState("grid");
+  const [createOpen, setCreateOpen] = useState(false);
 
   const [editingTask, setEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({ title: "", description: "", due_at: "", assignee_id: "", status: "open" });
@@ -158,7 +159,7 @@ export default function AdminTasksPage() {
   }, [tasks, query, userMap]);
 
   const createTask = async () => {
-    if (!createForm.title) return;
+    if (!createForm.title.trim()) return;
     setError("");
     setCreating(true);
     const due = createForm.due_at ? new Date(createForm.due_at).toISOString() : null;
@@ -201,7 +202,20 @@ export default function AdminTasksPage() {
     setCreateForm({ title: "", description: "", due_at: "", assignee_id: "" });
     setCreateFiles([]);
     setCreating(false);
+    setCreateOpen(false);
     await fetchAll();
+  };
+
+  const openCreate = () => {
+    setError("");
+    setCreateOpen(true);
+  };
+
+  const closeCreate = () => {
+    setCreateOpen(false);
+    setCreateForm({ title: "", description: "", due_at: "", assignee_id: "" });
+    setCreateFiles([]);
+    setCreating(false);
   };
 
   const openEdit = (t) => {
@@ -320,6 +334,9 @@ export default function AdminTasksPage() {
                 Grid
               </button>
             </div>
+            <button className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover" onClick={openCreate}>
+              Create Task
+            </button>
             <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={fetchAll}>Refresh</button>
           </div>
         </div>
@@ -381,33 +398,6 @@ export default function AdminTasksPage() {
           </div>
           <div className="mt-2 text-xs text-black/60">
             Filter by deadline • {bounds.from ? formatDateCustom(bounds.from) : "-"} → {bounds.to ? formatDateCustom(bounds.to) : "-"}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
-          <div className="text-sm font-semibold text-heading">Create Task</div>
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <input className="rounded-md border border-black/10 px-2 py-2" placeholder="Title" value={createForm.title} onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))} />
-            <input type="datetime-local" className="rounded-md border border-black/10 px-2 py-2" value={createForm.due_at} onChange={(e) => setCreateForm((f) => ({ ...f, due_at: e.target.value }))} />
-            <textarea className="md:col-span-2 rounded-md border border-black/10 px-2 py-2" rows={2} placeholder="Description (optional)" value={createForm.description} onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))} />
-            <select className="rounded-md border border-black/10 px-2 py-2" value={createForm.assignee_id} onChange={(e) => setCreateForm((f) => ({ ...f, assignee_id: e.target.value }))}>
-              <option value="">Assign to (optional)</option>
-              {users.map((u) => (<option key={u.user_id} value={u.user_id}>{u.display_name || u.user_id} • {u.role}</option>))}
-            </select>
-            <input
-              className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
-              type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
-              multiple
-              onChange={(e) => {
-                const fs = Array.from(e.target.files || []);
-                setCreateFiles(fs);
-              }}
-            />
-          </div>
-          {error && <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-          <div className="mt-2 flex gap-2">
-            <button className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50" disabled={creating || !createForm.title} onClick={createTask}>Create Task</button>
           </div>
         </div>
 
@@ -552,82 +542,153 @@ export default function AdminTasksPage() {
           )}
         </div>
 
-      {editingTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg">
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <div className="text-sm font-semibold text-heading">Edit Task</div>
-              <button className="rounded-md border border-black/10 px-3 py-1 hover:bg-black/5" onClick={closeEdit}>
-                Close
-              </button>
-            </div>
-            <div className="p-4 space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <input
-                  className="rounded-md border border-black/10 px-2 py-2"
-                  placeholder="Title"
-                  value={editForm.title}
-                  onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
-                />
-                <select
-                  className="rounded-md border border-black/10 px-2 py-2"
-                  value={editForm.status}
-                  onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
-                >
-                  <option value="open">Open</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
-                <input
-                  type="datetime-local"
-                  className="rounded-md border border-black/10 px-2 py-2"
-                  value={editForm.due_at}
-                  onChange={(e) => setEditForm((f) => ({ ...f, due_at: e.target.value }))}
-                />
-                <select
-                  className="rounded-md border border-black/10 px-2 py-2"
-                  value={editForm.assignee_id || ""}
-                  onChange={(e) => setEditForm((f) => ({ ...f, assignee_id: e.target.value }))}
-                >
-                  <option value="">Unassigned</option>
-                  {users.map((u) => (
-                    <option key={u.user_id} value={u.user_id}>
-                      {u.display_name || u.user_id}
-                    </option>
-                  ))}
-                </select>
-                <textarea
-                  className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
-                  rows={3}
-                  placeholder="Description"
-                  value={editForm.description}
-                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                />
-                <input
-                  className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
-                  multiple
-                  onChange={(e) => setEditFiles(Array.from(e.target.files || []))}
-                />
+        {createOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <div className="text-sm font-semibold text-heading">Create Task</div>
+                <button className="rounded-md border border-black/10 px-3 py-1 hover:bg-black/5" onClick={closeCreate}>
+                  Close
+                </button>
               </div>
-              <div className="mt-4 flex justify-end gap-2">
-                <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={closeEdit} disabled={savingEdit}>
-                  Cancel
-                </button>
-                <button
-                  className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
-                  onClick={saveEdit}
-                  disabled={savingEdit || !editForm.title.trim()}
-                >
-                  {savingEdit ? "Saving..." : "Save"}
-                </button>
+              <div className="p-4 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <input
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    placeholder="Title"
+                    value={createForm.title}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))}
+                  />
+                  <input
+                    type="datetime-local"
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    value={createForm.due_at}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, due_at: e.target.value }))}
+                  />
+                  <select
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    value={createForm.assignee_id}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, assignee_id: e.target.value }))}
+                  >
+                    <option value="">Assign to (optional)</option>
+                    {users.map((u) => (
+                      <option key={u.user_id} value={u.user_id}>
+                        {u.display_name || u.user_id} • {u.role}
+                      </option>
+                    ))}
+                  </select>
+                  <textarea
+                    className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                    rows={3}
+                    placeholder="Description (optional)"
+                    value={createForm.description}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))}
+                  />
+                  <input
+                    className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
+                    multiple
+                    onChange={(e) => {
+                      const fs = Array.from(e.target.files || []);
+                      setCreateFiles(fs);
+                    }}
+                  />
+                </div>
+                {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+                <div className="flex justify-end gap-2">
+                  <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={closeCreate} disabled={creating}>
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
+                    disabled={creating || !createForm.title.trim()}
+                    onClick={createTask}
+                  >
+                    {creating ? "Creating..." : "Create Task"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {editingTask && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <div className="text-sm font-semibold text-heading">Edit Task</div>
+                <button className="rounded-md border border-black/10 px-3 py-1 hover:bg-black/5" onClick={closeEdit}>
+                  Close
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <input
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    placeholder="Title"
+                    value={editForm.title}
+                    onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                  />
+                  <select
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    value={editForm.status}
+                    onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
+                  >
+                    <option value="open">Open</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                  <input
+                    type="datetime-local"
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    value={editForm.due_at}
+                    onChange={(e) => setEditForm((f) => ({ ...f, due_at: e.target.value }))}
+                  />
+                  <select
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    value={editForm.assignee_id || ""}
+                    onChange={(e) => setEditForm((f) => ({ ...f, assignee_id: e.target.value }))}
+                  >
+                    <option value="">Unassigned</option>
+                    {users.map((u) => (
+                      <option key={u.user_id} value={u.user_id}>
+                        {u.display_name || u.user_id}
+                      </option>
+                    ))}
+                  </select>
+                  <textarea
+                    className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                    rows={3}
+                    placeholder="Description"
+                    value={editForm.description}
+                    onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                  />
+                  <input
+                    className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
+                    multiple
+                    onChange={(e) => setEditFiles(Array.from(e.target.files || []))}
+                  />
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={closeEdit} disabled={savingEdit}>
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
+                    onClick={saveEdit}
+                    disabled={savingEdit || !editForm.title.trim()}
+                  >
+                    {savingEdit ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AuthGuard>
   );

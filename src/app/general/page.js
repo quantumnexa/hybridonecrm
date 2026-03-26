@@ -65,6 +65,7 @@ export default function GeneralTasksPage() {
   const [userId, setUserId] = useState(null);
   const [error, setError] = useState("");
   const [taskDocs, setTaskDocs] = useState({});
+  const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({ title: "", description: "", due_at: "", assignee_id: "" });
   const [createFiles, setCreateFiles] = useState([]);
   const [editingTask, setEditingTask] = useState(null);
@@ -85,7 +86,8 @@ export default function GeneralTasksPage() {
     return b ? { from: b.from.toISOString(), to: b.to.toISOString() } : { from: "", to: "" };
   });
   const [query, setQuery] = useState("");
-  const [viewMode, setViewMode] = useState("grid"); // 'grid' or 'list'
+  const [viewMode, setViewMode] = useState("grid");
+  const [createOpen, setCreateOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     setError("");
@@ -173,6 +175,7 @@ export default function GeneralTasksPage() {
   const createTask = async () => {
     if (!userId || !createForm.title.trim()) return;
     setError("");
+    setCreating(true);
     const due = createForm.due_at ? new Date(createForm.due_at).toISOString() : null;
     const payload = {
       title: createForm.title.trim(),
@@ -185,6 +188,7 @@ export default function GeneralTasksPage() {
     const { data, error: err } = await supabase.from("tasks").insert(payload).select("*").single();
     if (err) {
       setError(err.message || "Failed to create task");
+      setCreating(false);
       return;
     }
     if (createFiles.length > 0) {
@@ -205,7 +209,21 @@ export default function GeneralTasksPage() {
     }
     setCreateForm({ title: "", description: "", due_at: "", assignee_id: "" });
     setCreateFiles([]);
+    setCreating(false);
+    setCreateOpen(false);
     await loadAll();
+  };
+
+  const openCreate = () => {
+    setError("");
+    setCreateOpen(true);
+  };
+
+  const closeCreate = () => {
+    setCreateOpen(false);
+    setCreateForm({ title: "", description: "", due_at: "", assignee_id: "" });
+    setCreateFiles([]);
+    setCreating(false);
   };
 
   const openEdit = (t) => {
@@ -325,6 +343,9 @@ export default function GeneralTasksPage() {
               Grid
             </button>
           </div>
+          <button className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover" onClick={openCreate}>
+            Create Task
+          </button>
           <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={loadAll}>Refresh</button>
         </div>
       </div>
@@ -386,32 +407,6 @@ export default function GeneralTasksPage() {
         </div>
         <div className="mt-2 text-xs text-black/60">
           Filter by deadline • {bounds.from ? bounds.from.slice(0, 10) : "-"} → {bounds.to ? bounds.to.slice(0, 10) : "-"}
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
-        <div className="text-sm font-semibold text-heading">Create Task</div>
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-          <input className="rounded-md border border-black/10 px-2 py-2" placeholder="Title" value={createForm.title} onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))} />
-          <input type="datetime-local" className="rounded-md border border-black/10 px-2 py-2" value={createForm.due_at} onChange={(e) => setCreateForm((f) => ({ ...f, due_at: e.target.value }))} />
-          <select
-            className="rounded-md border border-black/10 px-2 py-2"
-            value={createForm.assignee_id}
-            onChange={(e) => setCreateForm((f) => ({ ...f, assignee_id: e.target.value }))}
-          >
-            <option value="">Assign to (default: me)</option>
-            {generalProfiles.map((p) => (
-              <option key={p.user_id} value={p.user_id}>
-                {p.display_name || p.user_id}
-              </option>
-            ))}
-          </select>
-          <textarea className="md:col-span-2 rounded-md border border-black/10 px-2 py-2" rows={2} placeholder="Description (optional)" value={createForm.description} onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))} />
-          <input className="md:col-span-2 rounded-md border border-black/10 px-2 py-2" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx" multiple onChange={(e) => setCreateFiles(Array.from(e.target.files || []))} />
-        </div>
-        {error && <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-        <div className="mt-2">
-          <button className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50" disabled={!createForm.title.trim()} onClick={createTask}>Create Task</button>
         </div>
       </div>
 
@@ -643,6 +638,74 @@ export default function GeneralTasksPage() {
           </div>
         )}
       </div>
+
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="text-sm font-semibold text-heading">Create Task</div>
+              <button className="rounded-md border border-black/10 px-3 py-1 hover:bg-black/5" onClick={closeCreate}>
+                Close
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  placeholder="Title"
+                  value={createForm.title}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))}
+                />
+                <input
+                  type="datetime-local"
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={createForm.due_at}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, due_at: e.target.value }))}
+                />
+                <select
+                  className="rounded-md border border-black/10 px-2 py-2"
+                  value={createForm.assignee_id}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, assignee_id: e.target.value }))}
+                >
+                  <option value="">Assign to (default: me)</option>
+                  {generalProfiles.map((p) => (
+                    <option key={p.user_id} value={p.user_id}>
+                      {p.display_name || p.user_id}
+                    </option>
+                  ))}
+                </select>
+                <textarea
+                  className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                  rows={3}
+                  placeholder="Description (optional)"
+                  value={createForm.description}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))}
+                />
+                <input
+                  className="md:col-span-2 rounded-md border border-black/10 px-2 py-2"
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
+                  multiple
+                  onChange={(e) => setCreateFiles(Array.from(e.target.files || []))}
+                />
+              </div>
+              {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+              <div className="flex justify-end gap-2">
+                <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={closeCreate} disabled={creating}>
+                  Cancel
+                </button>
+                <button
+                  className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
+                  disabled={creating || !createForm.title.trim()}
+                  onClick={createTask}
+                >
+                  {creating ? "Creating..." : "Create Task"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editingTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
