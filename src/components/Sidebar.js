@@ -109,29 +109,26 @@ export default function Sidebar({ items = [], title = "", logo = true }) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${notifUserId}` },
-        async (payload) => {
-          const evt = payload?.eventType || "";
-          const next = payload?.new || null;
-          const prev = payload?.old || null;
-          if (evt === "INSERT") {
-            if (next && next.is_read === false) setUnreadCount((c) => c + 1);
-            return;
-          }
-          if (evt === "UPDATE") {
-            if (prev && prev.is_read === false && next && next.is_read === true) setUnreadCount((c) => Math.max(0, c - 1));
-            if (prev && prev.is_read === true && next && next.is_read === false) setUnreadCount((c) => c + 1);
-            return;
-          }
-          if (evt === "DELETE") {
-            if (prev && prev.is_read === false) setUnreadCount((c) => Math.max(0, c - 1));
-            return;
-          }
+        async () => {
           await loadUnreadCount(notifUserId);
         }
       )
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
+    };
+  }, [notifUserId, loadUnreadCount]);
+
+  useEffect(() => {
+    if (!notifUserId) return;
+    const onChanged = async (e) => {
+      const d = e?.detail || {};
+      if (d.type === "mark_all_read" && d.user_id && d.user_id !== notifUserId) return;
+      await loadUnreadCount(notifUserId);
+    };
+    window.addEventListener("notifications:changed", onChanged);
+    return () => {
+      window.removeEventListener("notifications:changed", onChanged);
     };
   }, [notifUserId, loadUnreadCount]);
 

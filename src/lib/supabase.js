@@ -278,16 +278,33 @@ export async function createNotifications(rows) {
 
 export async function markNotificationRead(notificationId) {
   if (!supabaseConfigured || !notificationId) return;
-  await supabase.from("notifications").update({ is_read: true, read_at: new Date().toISOString() }).eq("id", notificationId);
+  const { error } = await supabase
+    .from("notifications")
+    .update({ is_read: true, read_at: new Date().toISOString() })
+    .eq("id", notificationId);
+  if (error) {
+    console.error("notifications.markRead failed", error);
+    return;
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("notifications:changed", { detail: { type: "mark_read", ids: [notificationId] } }));
+  }
 }
 
 export async function markAllNotificationsRead(userId) {
   if (!supabaseConfigured || !userId) return;
-  await supabase
+  const { error } = await supabase
     .from("notifications")
     .update({ is_read: true, read_at: new Date().toISOString() })
     .eq("user_id", userId)
     .eq("is_read", false);
+  if (error) {
+    console.error("notifications.markAllRead failed", error);
+    return;
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("notifications:changed", { detail: { type: "mark_all_read", user_id: userId } }));
+  }
 }
 
 export async function logActivity({ actorId, action, entityType, entityId, meta }) {
