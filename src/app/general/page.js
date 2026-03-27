@@ -213,7 +213,7 @@ export default function GeneralTasksPage() {
       url: "/admin/tasks",
     });
     if (data?.assignee_id) {
-      const assigneeUrl = await taskUrlForUser(data.id, data.assignee_id);
+      const assigneeUrl = `/general/tasks/${data.id}`;
       await notifyUser({
         userId: data.assignee_id,
         actorId: userId,
@@ -223,6 +223,21 @@ export default function GeneralTasksPage() {
         entityType: "task",
         entityId: data.id,
         url: assigneeUrl,
+      });
+    }
+    if (data?.assignee_id && data.assignee_id !== userId) {
+      const assigneeLabel =
+        generalProfiles.find((p) => p.user_id === data.assignee_id)?.display_name ||
+        data.assignee_id;
+      await notifyUser({
+        userId,
+        actorId: userId,
+        type: "task_assigned_by_me",
+        title: "Task assigned",
+        message: `${data.title} → ${assigneeLabel}`,
+        entityType: "task",
+        entityId: data.id,
+        url: `/general/tasks/${data.id}`,
       });
     }
     if (createFiles.length > 0) {
@@ -326,7 +341,7 @@ export default function GeneralTasksPage() {
       url: "/admin/tasks",
     });
     if (editingTask?.assignee_id !== updated?.assignee_id && updated?.assignee_id) {
-      const assigneeUrl = await taskUrlForUser(updated.id, updated.assignee_id);
+      const assigneeUrl = `/general/tasks/${updated.id}`;
       await notifyUser({
         userId: updated.assignee_id,
         actorId: userId,
