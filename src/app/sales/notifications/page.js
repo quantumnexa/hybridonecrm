@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
-import Link from "next/link";
 import { getUserCached, markAllNotificationsRead, markNotificationRead, supabase } from "@/lib/supabase";
+import { useRouter } from "next/navigation";
 
 export default function SalesNotificationsPage() {
+  const router = useRouter();
   const [userId, setUserId] = useState(null);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
@@ -35,6 +36,23 @@ export default function SalesNotificationsPage() {
     loadAll();
   }, [loadAll]);
 
+  useEffect(() => {
+    if (!userId) return;
+    const ch = supabase
+      .channel(`notifications_page:${userId}:${tab}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
+        async () => {
+          await loadAll();
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [userId, tab, loadAll]);
+
   const unreadCount = useMemo(() => (rows || []).filter((r) => !r.is_read).length, [rows]);
 
   const markAllRead = async () => {
@@ -43,9 +61,13 @@ export default function SalesNotificationsPage() {
     await loadAll();
   };
 
-  const markOneRead = async (id) => {
-    await markNotificationRead(id);
-    await loadAll();
+  const openNotification = async (n) => {
+    if (!n) return;
+    if (n.id && !n.is_read) {
+      await markNotificationRead(n.id);
+      setRows((prev) => (prev || []).map((x) => (x.id === n.id ? { ...x, is_read: true, read_at: new Date().toISOString() } : x)));
+    }
+    if (n.url) router.push(n.url);
   };
 
   return (
@@ -95,32 +117,22 @@ export default function SalesNotificationsPage() {
             <div className="text-sm text-black/60">No notifications.</div>
           ) : (
             <div className="space-y-2">
-              {rows.map((n) => {
-                const href = n.url || "";
-                return (
-                  <div key={n.id} className={`rounded-md border border-black/10 px-3 py-3 ${n.is_read ? "bg-white" : "bg-blue-50/40"}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-semibold text-heading">{n.title}</div>
-                        {n.message ? <div className="mt-1 text-sm text-black/70 whitespace-pre-wrap">{n.message}</div> : null}
-                        <div className="mt-2 text-xs text-black/50">{n.created_at ? new Date(n.created_at).toLocaleString() : ""}</div>
-                      </div>
-                      <div className="shrink-0 flex items-center gap-2">
-                        {!n.is_read && (
-                          <button className="rounded-md border border-black/10 px-2 py-1 text-xs hover:bg-black/5" onClick={() => markOneRead(n.id)}>
-                            Mark read
-                          </button>
-                        )}
-                        {href ? (
-                          <Link className="rounded-md bg-heading px-2 py-1 text-xs text-background hover:bg-hover" href={href}>
-                            Open
-                          </Link>
-                        ) : null}
-                      </div>
+              {rows.map((n) => (
+                <button
+                  key={n.id}
+                  className={`w-full rounded-md border border-black/10 px-3 py-3 text-left hover:bg-black/[0.02] ${n.is_read ? "bg-white" : "bg-blue-50/40"}`}
+                  onClick={() => openNotification(n)}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-heading">{n.title}</div>
+                      {n.message ? <div className="mt-1 text-sm text-black/70 whitespace-pre-wrap">{n.message}</div> : null}
+                      <div className="mt-2 text-xs text-black/50">{n.created_at ? new Date(n.created_at).toLocaleString() : ""}</div>
                     </div>
+                    <div className="shrink-0">{n.url ? <div className="rounded-md bg-heading px-2 py-1 text-xs text-background">Open</div> : null}</div>
                   </div>
-                );
-              })}
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -128,4 +140,3 @@ export default function SalesNotificationsPage() {
     </AuthGuard>
   );
 }
-
