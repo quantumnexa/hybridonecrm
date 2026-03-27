@@ -13,6 +13,7 @@ export default function Page() {
   const [tasks, setTasks] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [nowTs, setNowTs] = useState(0);
 
   const localDateKey = (d) => {
     const x = d instanceof Date ? d : new Date(d);
@@ -185,6 +186,8 @@ export default function Page() {
       await loadAll();
     };
     init();
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
   }, [loadAll]);
 
   const rangeWork = useMemo(() => {
@@ -192,7 +195,7 @@ export default function Page() {
     const to = new Date(bounds.to);
     const fromKey = localDateKey(from);
     const toKey = localDateKey(new Date(to.getTime() - 1));
-    const now = new Date();
+    const now = new Date(nowTs);
     const map = {};
     let totalMinutes = 0;
 
@@ -221,7 +224,7 @@ export default function Page() {
       totalMinutes += Number(d.minutes || 0);
     });
     return { totalMinutes, days, fromKey, toKey };
-  }, [sessions, bounds.from, bounds.to]);
+  }, [sessions, bounds.from, bounds.to, nowTs]);
 
   const workByDay = useMemo(() => {
     const map = {};
@@ -229,14 +232,21 @@ export default function Page() {
       const d = s.work_date || (s.login_at ? String(s.login_at).slice(0, 10) : "");
       if (!d) return;
       if (!map[d]) map[d] = { date: d, minutes: 0, firstIn: null, lastOut: null };
-      map[d].minutes += Number(s.duration_minutes || 0);
+      
+      let mins = Number(s.duration_minutes || 0);
       const li = s.login_at ? new Date(s.login_at) : null;
       const lo = s.logout_at ? new Date(s.logout_at) : null;
+      
+      if (!s.logout_at && li) {
+        mins = Math.max(0, Math.floor((nowTs - li.getTime()) / 60000));
+      }
+      
+      map[d].minutes += mins;
       if (li && (!map[d].firstIn || li < map[d].firstIn)) map[d].firstIn = li;
       if (lo && (!map[d].lastOut || lo > map[d].lastOut)) map[d].lastOut = lo;
     });
     return Object.values(map).sort((a, b) => (a.date < b.date ? 1 : -1));
-  }, [sessions]);
+  }, [sessions, nowTs]);
 
   const openSession = useMemo(() => {
     return (sessions || []).find((s) => !s.logout_at) || null;

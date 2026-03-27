@@ -67,15 +67,15 @@ export async function startWorkSession({ userId, role }) {
   if (!supabaseConfigured || !userId) return;
   const now = new Date();
   const workDate = localDateKey(now);
-  const { data: openToday } = await supabase
+  // Check for ANY open session, regardless of work_date
+  const { data: openAny } = await supabase
     .from("work_sessions")
     .select("id")
     .eq("user_id", userId)
-    .eq("work_date", workDate)
     .is("logout_at", null)
     .order("login_at", { ascending: false })
     .limit(1);
-  if ((openToday || []).length > 0) return;
+  if ((openAny || []).length > 0) return;
 
   const { data: prof } = await supabase
     .from("profiles")
@@ -125,89 +125,30 @@ export async function endWorkSession({ userId }) {
   if (!row) return;
 
   const loginAt = new Date(row.login_at);
-  const loginDay = localDateKey(loginAt);
-  const logoutDay = localDateKey(now);
+  const loginDay = row.work_date;
 
-  if (loginDay === logoutDay) {
-    const mins = Math.max(0, Math.floor((now.getTime() - loginAt.getTime()) / 60000));
-    await supabase
-      .from("work_sessions")
-      .update({ logout_at: now.toISOString(), duration_minutes: mins })
-      .eq("id", row.id);
-    await logActivity({
-      actorId: userId,
-      action: "work_session_ended",
-      entityType: "work_session",
-      entityId: row.id,
-      meta: { work_date: loginDay, duration_minutes: mins },
-    });
-    const p = await getProfileBasicCached(userId);
-    await notifyAdmins({
-      actorId: userId,
-      type: "activity",
-      title: `${p?.display_name || "User"} ended work session`,
-      message: `Date: ${loginDay} • ${mins} min`,
-      entityType: "work_session",
-      entityId: row.id,
-      url: "/admin/attendance",
-    });
-    return;
-  }
-
-  const endDay = endOfLocalDay(loginAt);
-  const mins1 = Math.max(0, Math.floor((endDay.getTime() - loginAt.getTime()) / 60000));
+  // Simply end the session without splitting across dates
+  const mins = Math.max(0, Math.floor((now.getTime() - loginAt.getTime()) / 60000));
   await supabase
     .from("work_sessions")
-    .update({ logout_at: endDay.toISOString(), duration_minutes: mins1 })
+    .update({ logout_at: now.toISOString(), duration_minutes: mins })
     .eq("id", row.id);
 
-  const startDay2 = startOfLocalDay(now);
-  const mins2 = Math.max(0, Math.floor((now.getTime() - startDay2.getTime()) / 60000));
-  const { data: prof } = await supabase
-    .from("profiles")
-    .select("org_id, role")
-    .eq("user_id", userId)
-    .maybeSingle();
-  await supabase.from("work_sessions").insert({
-    org_id: prof?.org_id || null,
-    user_id: userId,
-    role: prof?.role || null,
-    work_date: logoutDay,
-    login_at: startDay2.toISOString(),
-    logout_at: now.toISOString(),
-    duration_minutes: mins2,
-  });
   await logActivity({
     actorId: userId,
     action: "work_session_ended",
     entityType: "work_session",
     entityId: row.id,
-    meta: { work_date: loginDay, duration_minutes: mins1 },
-  });
-  await logActivity({
-    actorId: userId,
-    action: "work_session_started_and_ended",
-    entityType: "work_session",
-    entityId: null,
-    meta: { work_date: logoutDay, duration_minutes: mins2 },
+    meta: { work_date: loginDay, duration_minutes: mins },
   });
   const p = await getProfileBasicCached(userId);
   await notifyAdmins({
     actorId: userId,
     type: "activity",
     title: `${p?.display_name || "User"} ended work session`,
-    message: `Date: ${loginDay} • ${mins1} min`,
+    message: `Started: ${loginDay} • Total: ${mins} min`,
     entityType: "work_session",
     entityId: row.id,
-    url: "/admin/attendance",
-  });
-  await notifyAdmins({
-    actorId: userId,
-    type: "activity",
-    title: `${p?.display_name || "User"} started/ended work session`,
-    message: `Date: ${logoutDay} • ${mins2} min`,
-    entityType: "work_session",
-    entityId: null,
     url: "/admin/attendance",
   });
 }

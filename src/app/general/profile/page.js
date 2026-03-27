@@ -11,6 +11,7 @@ export default function Page() {
   const [tasks, setTasks] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [nowTs, setNowTs] = useState(0);
 
   const localDateKey = (d) => {
     const x = d instanceof Date ? d : new Date(d);
@@ -175,6 +176,8 @@ export default function Page() {
       await loadAll();
     };
     init();
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
   }, [loadAll]);
 
   const rangeWork = useMemo(() => {
@@ -182,7 +185,7 @@ export default function Page() {
     const to = new Date(bounds.to);
     const fromKey = localDateKey(from);
     const toKey = localDateKey(new Date(to.getTime() - 1));
-    const now = new Date();
+    const now = new Date(nowTs);
     const map = {};
     let totalMinutes = 0;
 
@@ -211,7 +214,7 @@ export default function Page() {
       totalMinutes += Number(d.minutes || 0);
     });
     return { totalMinutes, days, fromKey, toKey };
-  }, [sessions, bounds.from, bounds.to]);
+  }, [sessions, bounds.from, bounds.to, nowTs]);
 
   const taskStats = useMemo(() => {
     const total = tasks.length;

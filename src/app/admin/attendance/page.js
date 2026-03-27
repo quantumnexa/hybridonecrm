@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AuthGuard from "@/components/AuthGuard";
 import { supabase, getUserCached } from "@/lib/supabase";
-import { formatSecondsAsHHMMSS, formatLocalDateTime12, formatDateCustom } from "@/lib/timeFormat";
+import { formatSecondsAsHHMMSS, formatLocalTime12, formatDateCustom } from "@/lib/timeFormat";
 
 function localDateKey(d) {
   const x = d instanceof Date ? d : new Date(d);
@@ -155,13 +155,15 @@ export default function AdminAttendancePage() {
       return;
     }
 
-    const fromKey = localDateKey(new Date(bounds.from));
+    const fromDate = new Date(bounds.from);
+    const fromKeyBuf = localDateKey(addDays(fromDate, -1));
     const toKey = localDateKey(new Date(new Date(bounds.to).getTime() - 1));
 
+    // Fetch sessions in range OR any session that is still open
     const { data: ws, error: wErr } = await supabase
       .from("work_sessions")
       .select("*")
-      .gte("work_date", fromKey)
+      .or(`work_date.gte.${fromKeyBuf},logout_at.is.null`)
       .lte("work_date", toKey)
       .in("user_id", ids)
       .order("login_at", { ascending: false });
@@ -176,7 +178,7 @@ export default function AdminAttendancePage() {
     const { data: asg } = await supabase
       .from("shift_assignments")
       .select("user_id, work_date, shift_id")
-      .gte("work_date", fromKey)
+      .gte("work_date", fromKeyBuf)
       .lte("work_date", toKey)
       .in("user_id", ids);
     setAssignments(asg || []);
@@ -241,18 +243,80 @@ export default function AdminAttendancePage() {
       });
 
       const presentDays = new Set();
-      let seconds = 0;
+      const intervals = [];
       let firstIn = null;
       let lastOut = null;
-      let activeLoginAt = null;
+      let activeInRange = false;
+      
+      // Determine if user is present NOW based on any open session
+      const activeSession = arr.find(s => !s.logout_at);
+      const activeLoginAt = activeSession?.login_at ? new Date(activeSession.login_at) : null;
+
+      const mergeIntervalsSeconds = (ivs) => {
+        const list = (ivs || []).filter((x) => Array.isArray(x) && x.length >= 2 && x[1] > x[0]).sort((a, b) => a[0] - b[0]);
+        const merged = [];
+        let cur = null;
+        list.forEach(([a, b]) => {
+          if (!cur) {
+            cur = [a, b];
+            return;
+          }
+          if (a <= cur[1]) cur[1] = Math.max(cur[1], b);
+          else {
+            merged.push(cur);
+            cur = [a, b];
+          }
+        });
+        if (cur) merged.push(cur);
+        return merged.reduce((sum, [a, b]) => sum + Math.floor((b - a) / 1000), 0);
+      };
+
+      const addOverlapInterval = ({ row, windowStartMs, windowEndMs, dayKey }) => {
+        if (!row?.login_at) return;
+        const li = new Date(row.login_at).getTime();
+        if (!Number.isFinite(li)) return;
+        const lo = row.logout_at ? new Date(row.logout_at).getTime() : now.getTime();
+        const endTs = Number.isFinite(lo) ? lo : now.getTime();
+        const start = Math.max(li, windowStartMs);
+        const end = Math.min(endTs, windowEndMs);
+        if (end <= start) return;
+        intervals.push([start, end]);
+        presentDays.add(dayKey);
+        const liD = new Date(row.login_at);
+        const loD = row.logout_at ? new Date(row.logout_at) : null;
+        if (!firstIn || liD < firstIn) firstIn = liD;
+        if (loD && (!lastOut || loD > lastOut)) lastOut = loD;
+        if (!row.logout_at) activeInRange = true;
+      };
 
       // Iterate each day in range and compute overlap within shift windows
       for (let d = new Date(rangeInfo.from); d < rangeInfo.to; d = addDays(d, 1)) {
         const key = localDateKey(d);
-        const a = assignByUserDate.get(p.user_id)?.get(key) || null;
-        const sh = a?.shift_id ? shiftsById.get(a.shift_id) : null;
-        const sessionsToday = byDate.get(key) || [];
-        const nextKey = localDateKey(addDays(d, 1));
+        const prevKey = localDateKey(addDays(d, -1));
+        const aPrev = assignByUserDate.get(p.user_id)?.get(prevKey) || null;
+        const shPrev = aPrev?.shift_id ? shiftsById.get(aPrev.shift_id) : null;
+        const aCur = assignByUserDate.get(p.user_id)?.get(key) || null;
+        const shCur = aCur?.shift_id ? shiftsById.get(aCur.shift_id) : null;
+
+        let baseKey = key;
+        let sh = null;
+        let skipNightStartDay = false;
+        if (shPrev?.is_night) {
+          baseKey = prevKey;
+          sh = shPrev;
+        } else if (shCur) {
+          if (shCur.is_night) {
+            skipNightStartDay = true;
+          } else {
+            baseKey = key;
+            sh = shCur;
+          }
+        }
+
+        if (skipNightStartDay) continue;
+
+        const sessionsBase = byDate.get(baseKey) || [];
+        const nextKey = baseKey === key ? localDateKey(addDays(d, 1)) : key;
         const sessionsNext = byDate.get(nextKey) || [];
 
         // If shift exists, measure overlap in its window; else fallback to raw
@@ -260,55 +324,44 @@ export default function AdminAttendancePage() {
           const [shh, sm] = String(sh.start_time || "09:00").split(":").map(x => Number(x || 0));
           const [ehh, em] = String(sh.end_time || "18:00").split(":").map(x => Number(x || 0));
           const segs = [];
-          const startTs = new Date(`${key}T${String(shh).padStart(2,"0")}:${String(sm).padStart(2,"0")}:00`).getTime();
-          const endSame = new Date(`${key}T${String(ehh).padStart(2,"0")}:${String(em).padStart(2,"0")}:00`).getTime();
+          const startTs = new Date(`${baseKey}T${String(shh).padStart(2,"0")}:${String(sm).padStart(2,"0")}:00`).getTime();
+          const endSame = new Date(`${baseKey}T${String(ehh).padStart(2,"0")}:${String(em).padStart(2,"0")}:00`).getTime();
           if (!sh.is_night) {
             segs.push([startTs, endSame]);
           } else {
-            const nextStart = new Date(`${nextKey}T00:00:00`).getTime();
             const nextEnd = new Date(`${nextKey}T${String(ehh).padStart(2,"0")}:${String(em).padStart(2,"0")}:00`).getTime();
-            segs.push([startTs, Math.max(startTs, new Date(`${key}T23:59:59`).getTime() + 1000)]);
-            segs.push([nextStart, nextEnd]);
+            const mid = new Date(`${nextKey}T00:00:00`).getTime();
+            segs.push([startTs, Math.max(startTs, mid)]);
+            segs.push([mid, nextEnd]);
           }
-          const clamp = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
-          const addFrom = (list, s1, s2) => {
-            list.forEach(row => {
-              const li = row.login_at ? new Date(row.login_at).getTime() : null;
-              const lo = row.logout_at ? new Date(row.logout_at).getTime() : null;
-              const endTs = lo || now.getTime();
-              const startTs2 = li || s1;
-              const ov = clamp(startTs2, endTs, s1, s2);
-              if (ov > 0) {
-                seconds += Math.floor(ov / 1000);
-                const liD = row.login_at ? new Date(row.login_at) : null;
-                const loD = row.logout_at ? new Date(row.logout_at) : null;
-                if (liD && (!firstIn || liD < firstIn)) firstIn = liD;
-                if (loD && (!lastOut || loD > lastOut)) lastOut = loD;
-                presentDays.add(key);
-                if (!row.logout_at && li) activeLoginAt = li;
-              }
-            });
-          };
-          addFrom(sessionsToday, segs[0][0], segs[0][1]);
-          if (sh.is_night) addFrom(sessionsNext, segs[1][0], segs[1][1]);
+          sessionsBase.forEach((row) => addOverlapInterval({ row, windowStartMs: segs[0][0], windowEndMs: segs[0][1], dayKey: key }));
+          if (sh.is_night) sessionsNext.forEach((row) => addOverlapInterval({ row, windowStartMs: segs[1][0], windowEndMs: segs[1][1], dayKey: key }));
         } else {
           // Fallback: raw sessions for the day
-          sessionsToday.forEach(row => {
-            seconds += Number(row.duration_minutes || 0) * 60;
-            const li = row.login_at ? new Date(row.login_at) : null;
-            const lo = row.logout_at ? new Date(row.logout_at) : null;
-            if (li && (!firstIn || li < firstIn)) firstIn = li;
-            if (lo && (!lastOut || lo > lastOut)) lastOut = lo;
-            presentDays.add(key);
-            if (!row.logout_at && li) activeLoginAt = li;
-          });
+          const sessionsToday = byDate.get(key) || [];
+          sessionsToday.forEach((row) =>
+            addOverlapInterval({
+              row,
+              windowStartMs: new Date(`${key}T00:00:00`).getTime(),
+              windowEndMs: new Date(`${localDateKey(addDays(d, 1))}T00:00:00`).getTime(),
+              dayKey: key,
+            })
+          );
         }
       }
 
-      const present = !!activeLoginAt;
+      const seconds = mergeIntervalsSeconds(intervals);
+      const present = activeInRange;
       const presentDaysCount = presentDays.size;
       const absentDays = Math.max(0, rangeInfo.days - presentDaysCount);
       const displayName = p.display_name || "Unknown";
+      
+      // If user is present, ensure we show their active clock-in time
+      let displayFirstIn = firstIn;
+      if (present && !displayFirstIn) {
+        displayFirstIn = activeLoginAt;
+      }
+
       return {
         user_id: p.user_id,
         name: displayName,
@@ -316,7 +369,7 @@ export default function AdminAttendancePage() {
         present,
         presentDays: presentDaysCount,
         absentDays,
-        firstIn,
+        firstIn: displayFirstIn,
         lastOut: present ? null : lastOut,
         seconds,
       };
@@ -497,8 +550,8 @@ export default function AdminAttendancePage() {
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">{r.presentDays}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{r.absentDays}</td>
-                      <td className="px-4 py-3">{r.firstIn ? formatLocalDateTime12(r.firstIn) : "-"}</td>
-                      <td className="px-4 py-3">{r.lastOut ? formatLocalDateTime12(r.lastOut) : "-"}</td>
+                      <td className="px-4 py-3">{r.firstIn ? formatLocalTime12(r.firstIn) : "-"}</td>
+                      <td className="px-4 py-3">{r.lastOut ? formatLocalTime12(r.lastOut) : "-"}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{formatSecondsAsHHMMSS(r.seconds)}</td>
                       <td className="px-4 py-3 text-right">
                         <Link href={`/admin/users/${r.user_id}`} className="rounded-md border border-black/10 px-3 py-1 hover:bg-black/5">

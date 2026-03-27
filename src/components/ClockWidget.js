@@ -64,11 +64,11 @@ export default function ClockWidget() {
     }
     const now = new Date();
     const key = localDateKey(now);
+    // Find ANY open session for this user, regardless of work_date
     const { data: open } = await supabase
       .from("work_sessions")
       .select("*")
       .eq("user_id", uid)
-      .eq("work_date", key)
       .is("logout_at", null)
       .order("login_at", { ascending: false })
       .limit(1);
@@ -120,7 +120,7 @@ export default function ClockWidget() {
       .from("work_sessions")
       .select("work_date, login_at, logout_at, duration_minutes")
       .eq("user_id", uid)
-      .in("work_date", [baseKey, nextKey]);
+      .in("work_date", [yKey, baseKey, nextKey]);
     setSessions(ws || []);
 
     const schedStartTs = win?.startMs ?? null;

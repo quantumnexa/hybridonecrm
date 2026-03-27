@@ -78,8 +78,13 @@ export default function MyShifts() {
         .from("work_sessions")
         .select("work_date, login_at, logout_at, duration_minutes")
         .eq("user_id", userId)
-        .gte("work_date", toIsoDate(start))
-        .lte("work_date", toIsoDate(new Date(meta.year, meta.monthIndex, meta.days.length + 1))); // Buffer for next day sessions
+        // Fetch sessions in range OR any session that is still open
+        .or(`work_date.gte.${toIsoDate(new Date(start.getTime() - 86400000))},logout_at.is.null`)
+        .lte("work_date", toIsoDate(new Date(meta.year, meta.monthIndex, meta.days.length + 1))); 
+
+      // Find ANY open session for today's display
+      const activeSession = (ws || []).find(s => !s.logout_at);
+      const activeLoginAt = activeSession?.login_at ? new Date(activeSession.login_at) : null;
       const byDateSessions = {};
       (ws || []).forEach((s) => {
         const key = String(s.work_date);
@@ -173,10 +178,16 @@ export default function MyShifts() {
           }
         } else {
           sessionsToday.forEach((row) => {
-            const dur = Number(row.duration_minutes || 0);
-            if (dur > 0) seconds += dur * 60;
             const li = row.login_at ? new Date(row.login_at) : null;
             const lo = row.logout_at ? new Date(row.logout_at) : null;
+            
+            let rowSeconds = Number(row.duration_minutes || 0) * 60;
+            if (!row.logout_at && li) {
+              rowSeconds = Math.max(0, Math.floor((nowTs - li.getTime()) / 1000));
+              openInWindow = true;
+            }
+            seconds += rowSeconds;
+            
             if (li && (!firstLogin || li < firstLogin)) firstLogin = li;
             if (lo && (!lastLogout || lo > lastLogout)) lastLogout = lo;
           });

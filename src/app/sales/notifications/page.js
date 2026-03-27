@@ -33,7 +33,10 @@ export default function SalesNotificationsPage() {
   }, [tab]);
 
   useEffect(() => {
-    loadAll();
+    const t = setTimeout(() => {
+      loadAll();
+    }, 0);
+    return () => clearTimeout(t);
   }, [loadAll]);
 
   useEffect(() => {

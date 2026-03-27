@@ -21,6 +21,7 @@ export default function UserDetailPage() {
   const [completeNotes, setCompleteNotes] = useState({});
   const [taskDocs, setTaskDocs] = useState({});
   const [attachFiles, setAttachFiles] = useState({});
+  const [nowTs, setNowTs] = useState(0);
 
   const loadAll = useCallback(async () => {
     if (!id) return;
@@ -73,14 +74,21 @@ export default function UserDetailPage() {
       const d = s.work_date || (s.login_at ? String(s.login_at).slice(0, 10) : "");
       if (!d) return;
       if (!map[d]) map[d] = { date: d, minutes: 0, firstIn: null, lastOut: null };
-      map[d].minutes += Number(s.duration_minutes || 0);
+      
+      let mins = Number(s.duration_minutes || 0);
       const li = s.login_at ? new Date(s.login_at) : null;
       const lo = s.logout_at ? new Date(s.logout_at) : null;
+      
+      if (!s.logout_at && li) {
+        mins = Math.max(0, Math.floor((nowTs - li.getTime()) / 60000));
+      }
+      
+      map[d].minutes += mins;
       if (li && (!map[d].firstIn || li < map[d].firstIn)) map[d].firstIn = li;
       if (lo && (!map[d].lastOut || lo > map[d].lastOut)) map[d].lastOut = lo;
     });
     return Object.values(map).sort((a, b) => (a.date < b.date ? 1 : -1));
-  }, [workSessions]);
+  }, [workSessions, nowTs]);
 
   const todaySummary = useMemo(() => {
     return workByDay.find((x) => x.date === todayKey) || null;
@@ -101,6 +109,8 @@ export default function UserDetailPage() {
       await loadAll();
     };
     init();
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
   }, [loadAll]);
 
   const createTask = async () => {
@@ -348,7 +358,7 @@ export default function UserDetailPage() {
                 <div className="flex items-center justify-between">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold truncate">{t.title}</div>
-                    <div className="text-xs text-black/60 truncate">{t.status} • {t.due_at ? `Due: ${new Date(t.due_at).toLocaleString()}` : "No deadline"}</div>
+                    <div className="text-xs text-black/60 truncate">{t.status} • {t.due_at ? `Due: ${formatLocalDateTime12(t.due_at)}` : "No deadline"}</div>
                     {t.description && <div className="text-sm">{t.description}</div>}
                   </div>
                   <div className="flex items-center gap-2">
@@ -394,7 +404,7 @@ export default function UserDetailPage() {
                 <div className="mt-2 space-y-1">
                   {updates.filter((u) => u.task_id === t.id).map((u) => (
                     <div key={u.id} className="rounded border border-black/10 p-2">
-                      <div className="text-xs text-black/60">{new Date(u.created_at).toLocaleString()} • {u.state}</div>
+                      <div className="text-xs text-black/60">{formatLocalDateTime12(u.created_at)} • {u.state}</div>
                       {u.note && <div className="text-sm">{u.note}</div>}
                     </div>
                   ))}

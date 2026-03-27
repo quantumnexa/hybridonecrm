@@ -66,6 +66,7 @@ export default function Page() {
   const [tasks, setTasks] = useState([]);
   const [workSessions, setWorkSessions] = useState([]);
   const [profileMap, setProfileMap] = useState({});
+  const [nowTs, setNowTs] = useState(0);
 
   const toIsoInputValue = (d) => {
     if (!d) return "";
@@ -283,6 +284,8 @@ export default function Page() {
       setLoading(false);
     };
     run();
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
   }, [bounds.from, bounds.to, orgId, reloadKey]);
 
   const leadsByStatus = useMemo(() => {
@@ -332,8 +335,14 @@ export default function Page() {
   }, [tasks.length, taskCounts.completed]);
 
   const totalWorkMinutes = useMemo(() => {
-    return (workSessions || []).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
-  }, [workSessions]);
+    return (workSessions || []).reduce((sum, s) => {
+      let mins = Number(s.duration_minutes || 0);
+      if (!s.logout_at && s.login_at) {
+        mins = Math.max(0, Math.floor((nowTs - new Date(s.login_at).getTime()) / 60000));
+      }
+      return sum + mins;
+    }, 0);
+  }, [workSessions, nowTs]);
 
   const activeWorkers = useMemo(() => {
     const set = new Set();
@@ -395,7 +404,12 @@ export default function Page() {
     (workSessions || []).forEach((s) => {
       const uid = s.user_id || "unknown";
       if (!byUser.has(uid)) byUser.set(uid, { user_id: uid, presentDays: 0, minutes: 0 });
-      byUser.get(uid).minutes += Number(s.duration_minutes || 0);
+      
+      let mins = Number(s.duration_minutes || 0);
+      if (!s.logout_at && s.login_at) {
+        mins = Math.max(0, Math.floor((nowTs - new Date(s.login_at).getTime()) / 60000));
+      }
+      byUser.get(uid).minutes += mins;
     });
     byUserDay.forEach((_v, key) => {
       const uid = key.split("_")[0];
@@ -411,7 +425,7 @@ export default function Page() {
       }))
       .sort((a, b) => Number(b.minutes) - Number(a.minutes))
       .slice(0, 20);
-  }, [workSessions, profileMap]);
+  }, [workSessions, profileMap, nowTs]);
 
   return (
     <AuthGuard allowedRoles={["super_admin"]}>
