@@ -4,13 +4,21 @@ import AuthGuard from "@/components/AuthGuard";
 import Link from "next/link";
  
 
+function todayIsoDate() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export default function Page() {
   const [users, setUsers] = useState([]);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
-  const [createForm, setCreateForm] = useState({ email: "", password: "", display_name: "", role: "sales", position: "" });
+  const [createForm, setCreateForm] = useState({ email: "", password: "", display_name: "", role: "sales", position: "", joining_date: todayIsoDate() });
   const [editId, setEditId] = useState(null);
-  const [editForm, setEditForm] = useState({ email: "", display_name: "", role: "", position: "" });
+  const [editForm, setEditForm] = useState({ email: "", display_name: "", role: "", position: "", joining_date: "" });
 
   const roles = [
     { value: "super_admin", label: "Super Admin" },
@@ -49,6 +57,7 @@ export default function Page() {
       display_name: createForm.display_name?.trim() || null,
       role: createForm.role,
       position: createForm.role === "general_user" ? (createForm.position?.trim() || null) : null,
+      joining_date: createForm.joining_date || null,
     };
     const res = await fetch("/api/admin-users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     if (!res.ok) {
@@ -57,7 +66,7 @@ export default function Page() {
       setCreating(false);
       return;
     }
-    setCreateForm({ email: "", password: "", display_name: "", role: "sales", position: "" });
+    setCreateForm({ email: "", password: "", display_name: "", role: "sales", position: "", joining_date: todayIsoDate() });
     setCreating(false);
     await fetchUsers();
   };
@@ -65,11 +74,13 @@ export default function Page() {
   const startEdit = (u) => {
     setEditId(u.id);
     const role = u.profile?.role || u.app_metadata?.role || "";
+    const joiningDate = u.profile?.joining_date || (u.profile?.created_at ? String(u.profile.created_at).slice(0, 10) : "");
     setEditForm({
       email: u.email || "",
       display_name: u.profile?.display_name || u.user_metadata?.display_name || "",
       role,
       position: u.profile?.position || u.user_metadata?.position || "",
+      joining_date: joiningDate || "",
     });
   };
 
@@ -82,6 +93,7 @@ export default function Page() {
       role: editForm.role || undefined,
       display_name: editForm.display_name?.trim() || undefined,
       position: editForm.role === "general_user" ? (editForm.position?.trim() || undefined) : null,
+      joining_date: editForm.joining_date || null,
     };
     const res = await fetch("/api/admin-users", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     if (!res.ok) {
@@ -90,7 +102,7 @@ export default function Page() {
       return;
     }
     setEditId(null);
-    setEditForm({ email: "", display_name: "", role: "", position: "" });
+    setEditForm({ email: "", display_name: "", role: "", position: "", joining_date: "" });
     await fetchUsers();
   };
 
@@ -150,6 +162,10 @@ export default function Page() {
             <select className="rounded-md border border-black/10 px-2 py-2" value={createForm.role} onChange={(e) => setCreateForm((f) => ({ ...f, role: e.target.value }))}>
               {roles.map((r) => (<option key={r.value} value={r.value}>{r.label}</option>))}
             </select>
+            <div className="md:col-span-2">
+              <div className="mb-1 text-xs text-black/60">Joining date</div>
+              <input className="w-full rounded-md border border-black/10 px-2 py-2" type="date" value={createForm.joining_date} onChange={(e) => setCreateForm((f) => ({ ...f, joining_date: e.target.value }))} />
+            </div>
             {createForm.role === "general_user" && (
               <input className="rounded-md border border-black/10 px-2 py-2" placeholder="Position (for general user)" value={createForm.position} onChange={(e) => setCreateForm((f) => ({ ...f, position: e.target.value }))} />
             )}
@@ -178,12 +194,16 @@ export default function Page() {
                           <select className="rounded-md border border-black/10 px-2 py-2" value={editForm.role} onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value }))}>
                             {roles.map((r) => (<option key={r.value} value={r.value}>{r.label}</option>))}
                           </select>
+                          <div className="flex flex-col justify-center">
+                            <div className="mb-1 text-xs text-black/60">Joining date</div>
+                            <input className="rounded-md border border-black/10 px-2 py-2" type="date" value={editForm.joining_date} onChange={(e) => setEditForm((f) => ({ ...f, joining_date: e.target.value }))} />
+                          </div>
                           {editForm.role === "general_user" && (
                             <input className="rounded-md border border-black/10 px-2 py-2" placeholder="Position (for general user)" value={editForm.position} onChange={(e) => setEditForm((f) => ({ ...f, position: e.target.value }))} />
                           )}
                           <div className="md:col-span-2 flex items-center gap-2">
                             <button className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover" onClick={saveEdit}>Save</button>
-                            <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={() => { setEditId(null); setEditForm({ email: "", display_name: "", role: "", position: "" }); }}>Cancel</button>
+                            <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={() => { setEditId(null); setEditForm({ email: "", display_name: "", role: "", position: "", joining_date: "" }); }}>Cancel</button>
                           </div>
                         </div>
                       ) : (
@@ -196,6 +216,7 @@ export default function Page() {
                     </div>
                     <div className="flex items-center gap-2">
                       <Link href={`/admin/users/${u.id}`} className="rounded-md border border-black/10 px-2 py-1 hover:bg-black/5">👁️</Link>
+                      <Link href={`/admin/users/${u.id}#attendance`} className="rounded-md border border-black/10 px-2 py-1 hover:bg-black/5">Attendance</Link>
                       <button className="rounded-md border border-black/10 px-2 py-1 hover:bg-black/5" onClick={() => startEdit(u)}>Edit</button>
                       <button className="rounded-md border border-black/10 px-2 py-1 hover:bg-black/5" onClick={() => resetPassword(u.id)}>Reset Password</button>
                       {u.banned_until ? (

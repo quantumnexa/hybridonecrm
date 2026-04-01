@@ -12,6 +12,7 @@ create table if not exists public.profiles (
   role text not null check (role in ('super_admin','sales','lead_generator','appointment_setter','general_user')),
   display_name text,
   position text,
+  joining_date date,
   created_at timestamptz default now()
 );
 alter table public.profiles disable row level security;
@@ -291,7 +292,7 @@ begin
     select 1
     from public.profiles p
     where p.user_id = new.user_id
-      and new.work_date < date(p.created_at)
+      and new.work_date < coalesce(p.joining_date, date(p.created_at))
   ) then
     raise exception 'Cannot assign shift before hire date';
   end if;

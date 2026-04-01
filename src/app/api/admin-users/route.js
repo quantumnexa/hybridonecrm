@@ -32,7 +32,7 @@ export async function GET() {
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { email, password, display_name, role, position } = body || {};
+    const { email, password, display_name, role, position, joining_date } = body || {};
     if (!email || !password || !role) return NextResponse.json({ error: "Missing email/password/role" }, { status: 400 });
 
     const { data: created, error: createErr } = await supabaseServer.auth.admin.createUser({
@@ -50,6 +50,7 @@ export async function POST(req) {
       role,
       display_name: display_name || null,
       position: position || null,
+      joining_date: typeof joining_date === "string" && joining_date.trim() ? joining_date.trim() : null,
     });
     return NextResponse.json({ user_id: user.id });
   } catch (e) {
@@ -60,7 +61,7 @@ export async function POST(req) {
 export async function PATCH(req) {
   try {
     const body = await req.json();
-    const { user_id, email, password, role, display_name, position, action } = body || {};
+    const { user_id, email, password, role, display_name, position, joining_date, action } = body || {};
     if (!user_id) return NextResponse.json({ error: "Missing user_id" }, { status: 400 });
 
     if (action === "disable") {
@@ -87,12 +88,13 @@ export async function PATCH(req) {
       const { error: updErr } = await supabaseServer.auth.admin.updateUserById(user_id, payload);
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
     }
-    if (role || display_name !== undefined || position !== undefined) {
+    if (role || display_name !== undefined || position !== undefined || joining_date !== undefined) {
       await supabaseServer.from("profiles").upsert({
         user_id,
         role: role || undefined,
         display_name: display_name === undefined ? undefined : (display_name || null),
         position: position === undefined ? undefined : (position || null),
+        joining_date: joining_date === undefined ? undefined : (typeof joining_date === "string" && joining_date.trim() ? joining_date.trim() : null),
       });
     }
     return NextResponse.json({ ok: true });

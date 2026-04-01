@@ -22,6 +22,7 @@ export default function UserDetailPage() {
   const [taskDocs, setTaskDocs] = useState({});
   const [attachFiles, setAttachFiles] = useState({});
   const [nowTs, setNowTs] = useState(0);
+  const [attendanceDays, setAttendanceDays] = useState(14);
 
   const loadAll = useCallback(async () => {
     if (!id) return;
@@ -51,12 +52,27 @@ export default function UserDetailPage() {
     } else {
       setTaskDocs({});
     }
+    const toIsoDate = (d) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const from = new Date(today);
+    from.setDate(from.getDate() - 120);
+    const fromKey = toIsoDate(from);
+    const toKey = toIsoDate(today);
+
     const { data: ws } = await supabase
       .from("work_sessions")
       .select("*")
       .eq("user_id", id)
-      .order("login_at", { ascending: false })
-      .limit(200);
+      .or(`work_date.gte.${fromKey},logout_at.is.null`)
+      .lte("work_date", toKey)
+      .order("login_at", { ascending: false });
     setWorkSessions(ws || []);
   }, [id]);
 
@@ -67,6 +83,12 @@ export default function UserDetailPage() {
     const day = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
   }, []);
+
+  const joinKey = useMemo(() => {
+    const jd = profile?.joining_date || null;
+    if (!jd) return null;
+    return String(jd).slice(0, 10);
+  }, [profile?.joining_date]);
 
   const workByDay = useMemo(() => {
     const map = {};
@@ -89,6 +111,37 @@ export default function UserDetailPage() {
     });
     return Object.values(map).sort((a, b) => (a.date < b.date ? 1 : -1));
   }, [workSessions, nowTs]);
+
+  const displayWorkByDay = useMemo(() => {
+    const today = new Date(nowTs || Date.now());
+    today.setHours(0, 0, 0, 0);
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() - Math.max(0, (attendanceDays || 14) - 1));
+    if (joinKey) {
+      const jd = new Date(`${joinKey}T00:00:00`);
+      if (!Number.isNaN(jd.getTime()) && jd > cutoff) {
+        cutoff.setTime(jd.getTime());
+      }
+    }
+    const map = new Map(workByDay.map((r) => [r.date, r]));
+    const out = [];
+    for (let d = new Date(today); d >= cutoff; d.setDate(d.getDate() - 1)) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const key = `${y}-${m}-${day}`;
+      const row = map.get(key) || null;
+      out.push(
+        row || {
+          date: key,
+          minutes: 0,
+          firstIn: null,
+          lastOut: null,
+        }
+      );
+    }
+    return out;
+  }, [workByDay, attendanceDays, joinKey, nowTs]);
 
   const todaySummary = useMemo(() => {
     return workByDay.find((x) => x.date === todayKey) || null;
@@ -274,13 +327,14 @@ export default function UserDetailPage() {
             <div className="mt-2 text-sm">Name: {profile?.display_name || "-"}</div>
             <div className="text-sm">Email: {user?.email || "-"}</div>
             <div className="text-sm">Role: {profile?.role || "-"}</div>
+            <div className="text-sm">Joining Date: {profile?.joining_date ? formatDateCustom(profile.joining_date) : "-"}</div>
             {profile?.position && <div className="text-sm">Position: {profile.position}</div>}
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div id="attendance" className="grid grid-cols-1 md:grid-cols-3 gap-4 scroll-mt-24">
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold text-heading">Work Hours (Today)</div>
+            <div className="text-sm font-semibold text-heading">Attendance (Today)</div>
             <div className="mt-3 text-3xl font-bold">{todaySummary ? formatMinutesAsHHMM(todaySummary.minutes) : "00:00"}</div>
             <div className="mt-2 text-xs text-black/60">
               In: {todaySummary?.firstIn ? formatLocalTime12(todaySummary.firstIn) : "-"} • Out:{" "}
@@ -288,7 +342,19 @@ export default function UserDetailPage() {
             </div>
           </div>
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm md:col-span-2">
-            <div className="text-sm font-semibold text-heading">Daily Work Hours</div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-heading">Daily Attendance</div>
+              <select
+                className="rounded-md border border-black/10 px-2 py-1 text-sm"
+                value={attendanceDays}
+                onChange={(e) => setAttendanceDays(Number(e.target.value || 14))}
+              >
+                <option value={14}>Last 14 days</option>
+                <option value={30}>Last 30 days</option>
+                <option value={60}>Last 60 days</option>
+                <option value={90}>Last 90 days</option>
+              </select>
+            </div>
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-black/5 text-black/70">
@@ -300,7 +366,7 @@ export default function UserDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {workByDay.slice(0, 14).map((d) => (
+                  {displayWorkByDay.map((d) => (
                     <tr key={d.date} className="border-t">
                       <td className="px-3 py-2">{formatDateCustom(d.date)}</td>
                       <td className="px-3 py-2">{d.firstIn ? formatLocalTime12(d.firstIn) : "-"}</td>
@@ -308,7 +374,7 @@ export default function UserDetailPage() {
                       <td className="px-3 py-2 text-right">{formatMinutesAsHHMM(d.minutes)}</td>
                     </tr>
                   ))}
-                  {workByDay.length === 0 && (
+                  {displayWorkByDay.length === 0 && (
                     <tr>
                       <td className="px-3 py-6 text-center text-black/60" colSpan={4}>
                         No work sessions yet.
