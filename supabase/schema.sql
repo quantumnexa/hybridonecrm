@@ -245,6 +245,7 @@ create table if not exists public.work_sessions (
   login_at timestamptz not null default now(),
   logout_at timestamptz,
   duration_minutes integer not null default 0,
+  half_day boolean default false,
   created_at timestamptz default now()
 );
 alter table public.work_sessions disable row level security;

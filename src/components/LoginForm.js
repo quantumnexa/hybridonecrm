@@ -80,8 +80,8 @@ export default function LoginForm() {
       <main className="grid min-h-screen grid-cols-1 md:grid-cols-2">
         <section className="flex items-center justify-center px-8 py-16">
           <div className="w-full max-w-md">
-            <div className="text-heading text-3xl font-bold">HybridOne CRM System</div>
-            <p className="text-foreground mt-2">Sign in as Super Admin or Sales</p>
+            <div className="text-heading text-3xl font-bold">Hybrid One CRM System</div>
+            <p className="text-foreground mt-2">Sign in </p>
             <form onSubmit={onSubmit} className="mt-6 space-y-4">
               <div>
                 <label className="mb-1 block text-sm text-foreground">Your email</label>

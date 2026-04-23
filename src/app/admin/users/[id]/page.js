@@ -13,6 +13,8 @@ export default function UserDetailPage() {
   const [tasks, setTasks] = useState([]);
   const [updates, setUpdates] = useState([]);
   const [workSessions, setWorkSessions] = useState([]);
+  const [shiftAssignments, setShiftAssignments] = useState([]);
+  const [shifts, setShifts] = useState([]);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({ title: "", description: "", due_at: "", status: "open" });
@@ -22,7 +24,26 @@ export default function UserDetailPage() {
   const [taskDocs, setTaskDocs] = useState({});
   const [attachFiles, setAttachFiles] = useState({});
   const [nowTs, setNowTs] = useState(0);
-  const [attendanceDays, setAttendanceDays] = useState(14);
+  const [attendanceRange, setAttendanceRange] = useState("this_month");
+  const [showAddSession, setShowAddSession] = useState(false);
+  const [addSessionForm, setAddSessionForm] = useState({ work_date: "", login_at: "", logout_at: "", half_day: false });
+  const [addingSession, setAddingSession] = useState(false);
+  const [monthlySalaryInput, setMonthlySalaryInput] = useState("45000");
+
+  const toIsoInputValue = useCallback((d) => {
+    if (!d) return "";
+    const x = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(x.getTime())) return "";
+    const off = x.getTimezoneOffset();
+    return new Date(x.getTime() - off * 60000).toISOString().slice(0, 16);
+  }, []);
+
+  const isWeekendKey = useCallback((key) => {
+    const d = new Date(`${String(key).slice(0, 10)}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return false;
+    const day = d.getDay();
+    return day === 0 || day === 6;
+  }, []);
 
   const loadAll = useCallback(async () => {
     if (!id) return;
@@ -74,6 +95,22 @@ export default function UserDetailPage() {
       .lte("work_date", toKey)
       .order("login_at", { ascending: false });
     setWorkSessions(ws || []);
+
+    const { data: asg } = await supabase
+      .from("shift_assignments")
+      .select("work_date, shift_id")
+      .eq("user_id", id)
+      .gte("work_date", fromKey)
+      .lte("work_date", toKey);
+    const asgRows = asg || [];
+    setShiftAssignments(asgRows);
+    const shiftIds = Array.from(new Set(asgRows.map((a) => a.shift_id).filter(Boolean)));
+    if (shiftIds.length) {
+      const { data: sh } = await supabase.from("shifts").select("*").in("id", shiftIds);
+      setShifts(sh || []);
+    } else {
+      setShifts([]);
+    }
   }, [id]);
 
   const todayKey = useMemo(() => {
@@ -95,7 +132,7 @@ export default function UserDetailPage() {
     (workSessions || []).forEach((s) => {
       const d = s.work_date || (s.login_at ? String(s.login_at).slice(0, 10) : "");
       if (!d) return;
-      if (!map[d]) map[d] = { date: d, minutes: 0, firstIn: null, lastOut: null };
+      if (!map[d]) map[d] = { date: d, minutes: 0, firstIn: null, lastOut: null, halfDay: false };
       
       let mins = Number(s.duration_minutes || 0);
       const li = s.login_at ? new Date(s.login_at) : null;
@@ -108,6 +145,7 @@ export default function UserDetailPage() {
       map[d].minutes += mins;
       if (li && (!map[d].firstIn || li < map[d].firstIn)) map[d].firstIn = li;
       if (lo && (!map[d].lastOut || lo > map[d].lastOut)) map[d].lastOut = lo;
+      if (s?.half_day) map[d].halfDay = true;
     });
     return Object.values(map).sort((a, b) => (a.date < b.date ? 1 : -1));
   }, [workSessions, nowTs]);
@@ -115,21 +153,36 @@ export default function UserDetailPage() {
   const displayWorkByDay = useMemo(() => {
     const today = new Date(nowTs || Date.now());
     today.setHours(0, 0, 0, 0);
-    const cutoff = new Date(today);
-    cutoff.setDate(cutoff.getDate() - Math.max(0, (attendanceDays || 14) - 1));
+    let startDate = new Date(today);
+    let endDate = new Date(today);
+
+    if (attendanceRange === "this_month") {
+      startDate = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
+    } else if (attendanceRange === "last_month") {
+      const firstThisMonth = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
+      endDate = new Date(firstThisMonth);
+      endDate.setDate(0);
+      startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1, 0, 0, 0, 0);
+    } else {
+      const days = Math.max(1, Number(attendanceRange || 14) || 14);
+      startDate.setDate(startDate.getDate() - Math.max(0, days - 1));
+    }
+
     if (joinKey) {
       const jd = new Date(`${joinKey}T00:00:00`);
-      if (!Number.isNaN(jd.getTime()) && jd > cutoff) {
-        cutoff.setTime(jd.getTime());
+      if (!Number.isNaN(jd.getTime())) {
+        if (jd > endDate) return [];
+        if (jd > startDate) startDate = jd;
       }
     }
     const map = new Map(workByDay.map((r) => [r.date, r]));
     const out = [];
-    for (let d = new Date(today); d >= cutoff; d.setDate(d.getDate() - 1)) {
+    for (let d = new Date(endDate); d >= startDate; d.setDate(d.getDate() - 1)) {
       const y = d.getFullYear();
       const m = String(d.getMonth() + 1).padStart(2, "0");
       const day = String(d.getDate()).padStart(2, "0");
       const key = `${y}-${m}-${day}`;
+      if (isWeekendKey(key)) continue;
       const row = map.get(key) || null;
       out.push(
         row || {
@@ -137,15 +190,310 @@ export default function UserDetailPage() {
           minutes: 0,
           firstIn: null,
           lastOut: null,
+          halfDay: false,
         }
       );
     }
     return out;
-  }, [workByDay, attendanceDays, joinKey, nowTs]);
+  }, [workByDay, attendanceRange, joinKey, nowTs, isWeekendKey]);
 
-  const todaySummary = useMemo(() => {
-    return workByDay.find((x) => x.date === todayKey) || null;
-  }, [workByDay, todayKey]);
+  const shiftByDate = useMemo(() => {
+    const shiftById = new Map((shifts || []).map((s) => [s.id, s]));
+    const out = new Map();
+    (shiftAssignments || []).forEach((a) => {
+      const k = String(a.work_date || "");
+      const sh = a.shift_id ? shiftById.get(a.shift_id) : null;
+      if (k && sh) out.set(k, sh);
+    });
+    return out;
+  }, [shiftAssignments, shifts]);
+
+  const thisMonthTotalMinutes = useMemo(() => {
+    const now = new Date(nowTs || Date.now());
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    let fromKey = `${y}-${m}-01`;
+    if (joinKey && joinKey > fromKey) fromKey = joinKey;
+    let sum = 0;
+    (workByDay || []).forEach((r) => {
+      const k = String(r?.date || "");
+      if (!k || k < fromKey || k > todayKey) return;
+      if (isWeekendKey(k)) return;
+      sum += Number(r?.minutes || 0);
+    });
+    return sum;
+  }, [isWeekendKey, joinKey, nowTs, todayKey, workByDay]);
+
+  const thisMonthLateEarlyGapMinutes = useMemo(() => {
+    const now = new Date(nowTs || Date.now());
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    let fromKey = `${y}-${m}-01`;
+    if (joinKey && joinKey > fromKey) fromKey = joinKey;
+    const pad2 = (n) => String(n).padStart(2, "0");
+    let sum = 0;
+
+    (workByDay || []).forEach((d) => {
+      const key = String(d?.date || "");
+      if (!key || key < fromKey || key >= todayKey) return;
+      if (isWeekendKey(key)) return;
+      const sh = shiftByDate.get(key) || null;
+      if (!sh) return;
+      const isHalfDay = Boolean(d?.halfDay);
+
+      const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
+      const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
+      const shiftStart = new Date(`${key}T${pad2(shh)}:${pad2(sm)}:00`);
+      const shiftEnd = new Date(`${key}T${pad2(ehh)}:${pad2(em)}:00`);
+      if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
+
+      if (d?.firstIn instanceof Date && Number.isFinite(d.firstIn.getTime())) {
+        const mins = Math.floor((d.firstIn.getTime() - shiftStart.getTime()) / 60000);
+        if (mins > 30) sum += mins;
+      }
+      if (!isHalfDay && Number(d?.minutes || 0) < 8 * 60 && d?.lastOut instanceof Date && Number.isFinite(d.lastOut.getTime())) {
+        const mins = Math.floor((shiftEnd.getTime() - d.lastOut.getTime()) / 60000);
+        if (mins > 30) sum += mins;
+      }
+    });
+
+    return sum;
+  }, [isWeekendKey, joinKey, nowTs, shiftByDate, todayKey, workByDay]);
+
+  const thisMonthExpected = useMemo(() => {
+    const now = new Date(nowTs || Date.now());
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    let fromKey = `${y}-${m}-01`;
+    if (joinKey && joinKey > fromKey) fromKey = joinKey;
+    if (fromKey > todayKey) return { days: 0, minutes: 0 };
+
+    const assignedDays = new Set();
+    (shiftAssignments || []).forEach((a) => {
+      const k = String(a?.work_date || "");
+      if (!k || k < fromKey || k > todayKey) return;
+      if (k >= todayKey) return;
+      if (isWeekendKey(k)) return;
+      assignedDays.add(k);
+    });
+
+    let days = assignedDays.size;
+    if (days === 0) {
+      const toDate = new Date(`${todayKey}T00:00:00`);
+      toDate.setDate(toDate.getDate() - 1);
+      const fromDate = new Date(`${fromKey}T00:00:00`);
+      if (Number.isNaN(toDate.getTime()) || Number.isNaN(fromDate.getTime())) return { days: 0, minutes: 0 };
+      for (let d = new Date(toDate); d >= fromDate; d.setDate(d.getDate() - 1)) {
+        const day = d.getDay();
+        if (day !== 0 && day !== 6) days += 1;
+      }
+    }
+
+    return { days, minutes: days * 8 * 60 };
+  }, [isWeekendKey, joinKey, nowTs, shiftAssignments, todayKey]);
+
+  const thisMonthAbsentDays = useMemo(() => {
+    const now = new Date(nowTs || Date.now());
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    let fromKey = `${y}-${m}-01`;
+    if (joinKey && joinKey > fromKey) fromKey = joinKey;
+    if (fromKey > todayKey) return 0;
+
+    const byDay = new Map((workByDay || []).map((r) => [String(r?.date || ""), r]));
+    const toDate = new Date(`${todayKey}T00:00:00`);
+    const fromDate = new Date(`${fromKey}T00:00:00`);
+    if (Number.isNaN(toDate.getTime()) || Number.isNaN(fromDate.getTime())) return 0;
+
+    let absent = 0;
+    for (let d = new Date(toDate); d >= fromDate; d.setDate(d.getDate() - 1)) {
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (isWeekendKey(key)) continue;
+      if (key >= todayKey) continue;
+      const row = byDay.get(key) || null;
+      const isAbsent = !row || (!row.firstIn && !row.lastOut);
+      if (isAbsent) absent += 1;
+    }
+    return absent;
+  }, [isWeekendKey, joinKey, nowTs, todayKey, workByDay]);
+
+  const thisMonthPresentDays = useMemo(() => Math.max(0, thisMonthExpected.days - thisMonthAbsentDays), [thisMonthAbsentDays, thisMonthExpected.days]);
+
+  const thisMonthActualWorkingMinutes = useMemo(() => {
+    const now = new Date(nowTs || Date.now());
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    let fromKey = `${y}-${m}-01`;
+    if (joinKey && joinKey > fromKey) fromKey = joinKey;
+    if (fromKey > todayKey) return 0;
+
+    const byDay = new Map((workByDay || []).map((r) => [String(r?.date || ""), r]));
+    const toDate = new Date(`${todayKey}T00:00:00`);
+    toDate.setDate(toDate.getDate() - 1);
+    const fromDate = new Date(`${fromKey}T00:00:00`);
+    if (Number.isNaN(toDate.getTime()) || Number.isNaN(fromDate.getTime())) return 0;
+
+    let sum = 0;
+    for (let d = new Date(toDate); d >= fromDate; d.setDate(d.getDate() - 1)) {
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (isWeekendKey(key)) continue;
+      const row = byDay.get(key) || null;
+      const isAbsent = !row || (!row.firstIn && !row.lastOut);
+      if (isAbsent) continue;
+      sum += row?.halfDay ? 4 * 60 : 8 * 60;
+    }
+    if (!isWeekendKey(todayKey)) {
+      const todayRow = byDay.get(todayKey) || null;
+      const isPresentToday = todayRow && (todayRow.firstIn || todayRow.lastOut);
+      if (isPresentToday) sum += todayRow?.halfDay ? 4 * 60 : 8 * 60;
+    }
+    return sum;
+  }, [isWeekendKey, joinKey, nowTs, todayKey, workByDay]);
+
+  const thisMonthOvertimeMinutes = useMemo(() => {
+    const now = new Date(nowTs || Date.now());
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    let fromKey = `${y}-${m}-01`;
+    if (joinKey && joinKey > fromKey) fromKey = joinKey;
+    let sum = 0;
+    (workByDay || []).forEach((r) => {
+      const k = String(r?.date || "");
+      if (!k || k < fromKey || k > todayKey) return;
+      if (isWeekendKey(k)) return;
+      const requiredMinutes = r?.halfDay ? 4 * 60 : 8 * 60;
+      const overtime = Number(r?.minutes || 0) - requiredMinutes;
+      if (overtime > 0) sum += overtime;
+    });
+    return sum;
+  }, [isWeekendKey, joinKey, nowTs, todayKey, workByDay]);
+
+  const thisMonthGapMinutes = useMemo(() => thisMonthLateEarlyGapMinutes, [thisMonthLateEarlyGapMinutes]);
+
+  const thisMonthGapAfterPenaltyMinutes = useMemo(() => thisMonthLateEarlyGapMinutes * 3, [thisMonthLateEarlyGapMinutes]);
+
+  const thisMonthTotalWorkingMinutes = useMemo(
+    () => thisMonthActualWorkingMinutes + thisMonthGapAfterPenaltyMinutes,
+    [thisMonthActualWorkingMinutes, thisMonthGapAfterPenaltyMinutes]
+  );
+
+  const thisMonthRemainingMinutes = useMemo(
+    () => Math.max(0, thisMonthTotalWorkingMinutes - thisMonthTotalMinutes),
+    [thisMonthTotalMinutes, thisMonthTotalWorkingMinutes]
+  );
+
+  const salarySummary = useMemo(() => {
+    const monthlySalary = Math.max(0, Number(monthlySalaryInput || 0) || 0);
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const toKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    const fromKeyToDate = (key) => new Date(`${String(key).slice(0, 10)}T00:00:00`);
+    const keyMax = (a, b) => (String(a || "") > String(b || "") ? String(a) : String(b));
+    const keyMin = (a, b) => (String(a || "") < String(b || "") ? String(a) : String(b));
+
+    const now = new Date(nowTs || Date.now());
+    let monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    if (attendanceRange === "last_month") monthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+    const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 0, 0, 0, 0);
+
+    const monthStartKey = toKey(monthStart);
+    const monthEndKey = toKey(monthEnd);
+    const scopeStartKey = joinKey ? keyMax(joinKey, monthStartKey) : monthStartKey;
+
+    const isCurrentMonth = monthStartKey.slice(0, 7) === todayKey.slice(0, 7);
+    const yesterday = new Date(`${todayKey}T00:00:00`);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayKey = toKey(yesterday);
+    const cutoffKey = isCurrentMonth ? keyMin(yesterdayKey, monthEndKey) : monthEndKey;
+
+    const byDay = new Map((workByDay || []).map((r) => [String(r?.date || ""), r]));
+
+    let workingDaysFullMonth = 0;
+    for (let d = new Date(monthStart); d <= monthEnd; d.setDate(d.getDate() + 1)) {
+      const k = toKey(d);
+      if (isWeekendKey(k)) continue;
+      workingDaysFullMonth += 1;
+    }
+
+    let workingDaysScope = 0;
+    let absentDays = 0;
+    let requiredMinutes = 0;
+    let workedMinutes = 0;
+    let penaltyMinutes = 0;
+
+    const fromDate = fromKeyToDate(scopeStartKey);
+    const toDate = fromKeyToDate(cutoffKey);
+    if (!Number.isNaN(fromDate.getTime()) && !Number.isNaN(toDate.getTime()) && cutoffKey >= scopeStartKey) {
+      for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
+        const k = toKey(d);
+        if (isWeekendKey(k)) continue;
+        workingDaysScope += 1;
+
+        const row = byDay.get(k) || null;
+        const isAbsent = !row || (!row.firstIn && !row.lastOut);
+        if (isAbsent) {
+          absentDays += 1;
+          continue;
+        }
+
+        const baseReq = row?.halfDay ? 4 * 60 : 8 * 60;
+        requiredMinutes += baseReq;
+        workedMinutes += Number(row?.minutes || 0);
+
+        const sh = shiftByDate.get(k) || null;
+        if (!sh) continue;
+
+        const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
+        const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
+        const shiftStart = new Date(`${k}T${pad2(shh)}:${pad2(sm)}:00`);
+        const shiftEnd = new Date(`${k}T${pad2(ehh)}:${pad2(em)}:00`);
+        if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
+
+        if (row?.firstIn instanceof Date && Number.isFinite(row.firstIn.getTime())) {
+          const mins = Math.floor((row.firstIn.getTime() - shiftStart.getTime()) / 60000);
+          if (mins > 30) penaltyMinutes += mins;
+        }
+        if (!row?.halfDay && Number(row?.minutes || 0) < 8 * 60 && row?.lastOut instanceof Date && Number.isFinite(row.lastOut.getTime())) {
+          const mins = Math.floor((shiftEnd.getTime() - row.lastOut.getTime()) / 60000);
+          if (mins > 30) penaltyMinutes += mins;
+        }
+      }
+    }
+
+    const payableDays = Math.max(0, workingDaysScope - absentDays);
+    const dayRate = workingDaysFullMonth > 0 ? monthlySalary / workingDaysFullMonth : 0;
+    const baseMinuteRate = workingDaysFullMonth > 0 ? monthlySalary / (workingDaysFullMonth * 8 * 60) : 0;
+    const perHourRate = baseMinuteRate * 60;
+    const basePayAfterAbsent = payableDays * dayRate;
+    const penaltyAfter3x = penaltyMinutes * 3;
+    const totalRequired = requiredMinutes + penaltyAfter3x;
+    const shortfall = Math.max(0, totalRequired - workedMinutes);
+    const lateEarlyDeduction = shortfall * baseMinuteRate;
+    const salaryAfterLates = Math.max(0, basePayAfterAbsent - lateEarlyDeduction);
+    const extraAfterTarget = Math.max(0, workedMinutes - totalRequired);
+    const overtimePay = extraAfterTarget * baseMinuteRate;
+    const finalSalary = salaryAfterLates + overtimePay;
+
+    const monthLabel = `${monthStart.getFullYear()}-${pad2(monthStart.getMonth() + 1)}`;
+    return {
+      monthLabel,
+      monthlySalary,
+      workingDaysFullMonth,
+      workingDaysScope,
+      absentDays,
+      payableDays,
+      perHourRate,
+      requiredMinutes,
+      workedMinutes,
+      penaltyMinutes,
+      penaltyAfter3x,
+      totalRequired,
+      shortfall,
+      basePayAfterAbsent,
+      lateEarlyDeduction,
+      overtimePay,
+      finalSalary,
+    };
+  }, [attendanceRange, isWeekendKey, joinKey, monthlySalaryInput, nowTs, shiftByDate, todayKey, workByDay]);
 
   const stats = useMemo(() => {
     const total = tasks.length;
@@ -165,6 +513,218 @@ export default function UserDetailPage() {
     const id = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(id);
   }, [loadAll]);
+
+  const openManualSessionModal = useCallback(
+    (row) => {
+      const dateKey = row?.date || "";
+      const defaultLogin = dateKey ? `${dateKey}T09:00` : "";
+      const defaultLogout = dateKey ? `${dateKey}T18:00` : "";
+      setAddSessionForm({
+        work_date: dateKey,
+        login_at: row?.firstIn ? toIsoInputValue(row.firstIn) : defaultLogin,
+        logout_at: row?.lastOut ? toIsoInputValue(row.lastOut) : defaultLogout,
+        half_day: Boolean(row?.halfDay),
+      });
+      setShowAddSession(true);
+      setError("");
+    },
+    [toIsoInputValue]
+  );
+
+  const saveManualSession = useCallback(async () => {
+    if (!id) return;
+    const workDate = String(addSessionForm.work_date || "").slice(0, 10);
+    const loginVal = String(addSessionForm.login_at || "").trim();
+    const logoutVal = String(addSessionForm.logout_at || "").trim();
+    if (!workDate || !loginVal || !logoutVal) {
+      setError("Please enter First Login and Last Logout.");
+      return;
+    }
+    const li = new Date(loginVal);
+    const lo = new Date(logoutVal);
+    if (Number.isNaN(li.getTime()) || Number.isNaN(lo.getTime())) {
+      setError("Invalid date/time.");
+      return;
+    }
+    setAddingSession(true);
+    setError("");
+    try {
+      const res = await fetch("/api/admin-work-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: id,
+          work_date: workDate,
+          login_at: li.toISOString(),
+          logout_at: lo.toISOString(),
+          half_day: Boolean(addSessionForm.half_day),
+          mode: "replace_day",
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || "Failed to save manual attendance");
+      setShowAddSession(false);
+      setAddSessionForm({ work_date: "", login_at: "", logout_at: "", half_day: false });
+      await loadAll();
+    } catch (e) {
+      setError(e?.message || "Failed to save manual attendance");
+    } finally {
+      setAddingSession(false);
+    }
+  }, [addSessionForm.half_day, addSessionForm.login_at, addSessionForm.logout_at, addSessionForm.work_date, id, loadAll]);
+
+  const exportAttendanceExcel = useCallback(async () => {
+    const XLSX = await import("xlsx");
+
+    const safeSheetName = (name) =>
+      String(name || "Sheet")
+        .replace(/[\[\]\*\/\\\?\:]/g, " ")
+        .slice(0, 31)
+        .trim() || "Sheet";
+
+    const pad2 = (n) => String(n).padStart(2, "0");
+
+    const calcLateEarly = (dayRow) => {
+      const sh = shiftByDate.get(dayRow.date) || null;
+      if (!sh) return { lateInMin: null, earlyOutMin: null };
+      const isHalfDay = Boolean(dayRow?.halfDay);
+      const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
+      const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
+      const shiftStart = new Date(`${dayRow.date}T${pad2(shh)}:${pad2(sm)}:00`);
+      const shiftEnd = new Date(`${dayRow.date}T${pad2(ehh)}:${pad2(em)}:00`);
+      if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
+      const lateInMin = dayRow.firstIn ? Math.max(0, Math.floor((dayRow.firstIn.getTime() - shiftStart.getTime()) / 60000)) : null;
+      const earlyOutMin =
+        !isHalfDay && Number(dayRow.minutes || 0) < 8 * 60 && dayRow.lastOut
+          ? Math.max(0, Math.floor((shiftEnd.getTime() - dayRow.lastOut.getTime()) / 60000))
+          : null;
+      return { lateInMin, earlyOutMin };
+    };
+
+    const byMonth = new Map();
+    const now = new Date(nowTs || Date.now());
+    now.setHours(0, 0, 0, 0);
+    const from = new Date(now);
+    from.setDate(from.getDate() - 120);
+    let fromKey = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-${String(from.getDate()).padStart(2, "0")}`;
+    if (joinKey && joinKey > fromKey) fromKey = joinKey;
+
+    const byDay = new Map((workByDay || []).map((r) => [String(r?.date || ""), r]));
+    const toDate = new Date(`${todayKey}T00:00:00`);
+    const fromDate = new Date(`${fromKey}T00:00:00`);
+    for (let d = new Date(toDate); d >= fromDate; d.setDate(d.getDate() - 1)) {
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (isWeekendKey(key)) continue;
+      const row = byDay.get(key) || { date: key, minutes: 0, firstIn: null, lastOut: null, halfDay: false };
+      const monthKey = key.slice(0, 7);
+      if (!byMonth.has(monthKey)) byMonth.set(monthKey, []);
+      byMonth.get(monthKey).push(row);
+    }
+
+    const header = ["Date", "Day", "First Login", "Last Logout", "Hours", "Overtime", "Late In", "Early Out", "Status", "Half Day"];
+    const monthKeys = Array.from(byMonth.keys()).sort((a, b) => (a > b ? -1 : 1));
+
+    const wb = XLSX.utils.book_new();
+
+    monthKeys.forEach((monthKey) => {
+      const rows = byMonth.get(monthKey) || [];
+      const sheetName = safeSheetName(monthKey);
+      const isCurrentMonth = String(monthKey) === String(todayKey).slice(0, 7);
+
+      let workedMinutes = 0;
+      let actualWorkingMinutes = 0;
+      let workingDays = 0;
+      let absentDays = 0;
+      let overtimeMinutes = 0;
+      let gapMinutes = 0;
+
+      rows.forEach((d) => {
+        const key = String(d?.date || "");
+        const isToday = key === todayKey;
+        const isAbsent = !d?.firstIn && !d?.lastOut;
+        const requiredMinutes = d?.halfDay ? 4 * 60 : 8 * 60;
+
+        workedMinutes += Number(d?.minutes || 0);
+        const ot = Number(d?.minutes || 0) - requiredMinutes;
+        if (ot > 0) overtimeMinutes += ot;
+
+        const countForDays = !isCurrentMonth || !isToday;
+        if (countForDays) {
+          workingDays += 1;
+          if (isAbsent) absentDays += 1;
+        }
+
+        if (!isAbsent) actualWorkingMinutes += requiredMinutes;
+
+        const countForGap = !isCurrentMonth || key < todayKey;
+        if (countForGap) {
+          const { lateInMin, earlyOutMin } = calcLateEarly(d);
+          if (Number.isFinite(lateInMin) && lateInMin > 30) gapMinutes += lateInMin;
+          if (Number.isFinite(earlyOutMin) && earlyOutMin > 30) gapMinutes += earlyOutMin;
+        }
+      });
+
+      const presentDays = Math.max(0, workingDays - absentDays);
+      const gapAfter3x = gapMinutes * 3;
+      const yourTotalMinutes = actualWorkingMinutes + gapAfter3x;
+      const remainingMinutes = Math.max(0, yourTotalMinutes - workedMinutes);
+
+      const summaryAoa = [
+        ["Summary"],
+        ["Worked", formatMinutesAsHHMM(workedMinutes)],
+        ["Your Total Hours", formatMinutesAsHHMM(yourTotalMinutes)],
+        ["You have to work more", formatMinutesAsHHMM(remainingMinutes)],
+        ["Actual Working Hours", formatMinutesAsHHMM(actualWorkingMinutes)],
+        ["Working Days", workingDays],
+        ["Absent Days", absentDays],
+        ["Present Days", presentDays],
+        ["Overtime", formatMinutesAsHHMM(overtimeMinutes)],
+        ["Gap", formatMinutesAsHHMM(gapMinutes)],
+        ["Gap (After 3x)", formatMinutesAsHHMM(gapAfter3x)],
+        [""],
+      ];
+      const aoa = [
+        ...summaryAoa,
+        header,
+        ...rows.map((d) => {
+          const { lateInMin, earlyOutMin } = calcLateEarly(d);
+          const isAbsent = !d.firstIn && !d.lastOut;
+          const requiredMinutes = d?.halfDay ? 4 * 60 : 8 * 60;
+          const overtimeMin = Math.max(0, Number(d.minutes || 0) - requiredMinutes);
+          const statusParts = [];
+          if (Number.isFinite(lateInMin) && lateInMin > 30) statusParts.push("Late");
+          if (Number(d.minutes || 0) > 0 && Number(d.minutes || 0) < requiredMinutes && d.lastOut) statusParts.push("Early Left");
+          if (d?.halfDay) statusParts.push("Half Day");
+          const isToday = String(d.date) === todayKey;
+          const status = isAbsent ? (isToday ? "Pending" : "Absent") : statusParts.length ? statusParts.join(" & ") : "-";
+          const dayName = (() => {
+            const dt = new Date(`${String(d.date).slice(0, 10)}T00:00:00`);
+            const names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+            const idx = dt.getDay();
+            return names[idx] || "";
+          })();
+          return [
+            formatDateCustom(d.date),
+            dayName,
+            d.firstIn ? formatLocalTime12(d.firstIn) : "",
+            d.lastOut ? formatLocalTime12(d.lastOut) : "",
+            formatMinutesAsHHMM(d.minutes),
+            overtimeMin > 0 ? formatMinutesAsHHMM(overtimeMin) : "-",
+            Number.isFinite(lateInMin) && lateInMin > 0 ? formatMinutesAsHHMM(lateInMin) : "",
+            Number.isFinite(earlyOutMin) && earlyOutMin > 0 ? formatMinutesAsHHMM(earlyOutMin) : "",
+            status,
+            d?.halfDay ? "Yes" : "No",
+          ];
+        }),
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    });
+
+    const baseName = (profile?.display_name || user?.email || "attendance").replace(/[<>:"/\\|?*\x00-\x1F]/g, " ").trim() || "attendance";
+    const fileName = `${baseName}_attendance.xlsx`;
+    XLSX.writeFile(wb, fileName, { bookType: "xlsx" });
+  }, [isWeekendKey, joinKey, nowTs, profile?.display_name, shiftByDate, todayKey, user?.email, workByDay]);
 
   const createTask = async () => {
     if (!currentUserId || !id || !createForm.title.trim()) return;
@@ -334,49 +894,174 @@ export default function UserDetailPage() {
 
         <div id="attendance" className="grid grid-cols-1 md:grid-cols-3 gap-4 scroll-mt-24">
           <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold text-heading">Attendance (Today)</div>
-            <div className="mt-3 text-3xl font-bold">{todaySummary ? formatMinutesAsHHMM(todaySummary.minutes) : "00:00"}</div>
-            <div className="mt-2 text-xs text-black/60">
-              In: {todaySummary?.firstIn ? formatLocalTime12(todaySummary.firstIn) : "-"} • Out:{" "}
-              {todaySummary?.lastOut ? formatLocalTime12(todaySummary.lastOut) : "-"}
+            <div className="text-sm font-semibold text-heading">Worked / Your Total Hours</div>
+            <div className="mt-3 text-3xl font-bold">
+              {formatMinutesAsHHMM(thisMonthTotalMinutes)} / {formatMinutesAsHHMM(thisMonthTotalWorkingMinutes)}
             </div>
+            <div className="mt-2 text-xs text-black/60">You have to work more: {formatMinutesAsHHMM(thisMonthRemainingMinutes)}</div>
           </div>
-          <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm md:col-span-2">
-            <div className="flex items-center justify-between gap-3">
+          <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm md:col-span-3">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div className="text-sm font-semibold text-heading">Daily Attendance</div>
-              <select
-                className="rounded-md border border-black/10 px-2 py-1 text-sm"
-                value={attendanceDays}
-                onChange={(e) => setAttendanceDays(Number(e.target.value || 14))}
-              >
-                <option value={14}>Last 14 days</option>
-                <option value={30}>Last 30 days</option>
-                <option value={60}>Last 60 days</option>
-                <option value={90}>Last 90 days</option>
-              </select>
+              <div className="flex items-center gap-3">
+                <button className="rounded-md border border-black/10 px-3 py-1 text-sm hover:bg-black/5" onClick={exportAttendanceExcel}>
+                  Export Excel
+                </button>
+                <select
+                  className="rounded-md border border-black/10 px-2 py-1 text-sm"
+                  value={attendanceRange}
+                  onChange={(e) => setAttendanceRange(e.target.value)}
+                >
+                  <option value="14">Last 14 days</option>
+                  <option value="30">Last 30 days</option>
+                  <option value="60">Last 60 days</option>
+                  <option value="90">Last 90 days</option>
+                  <option value="this_month">This Month</option>
+                  <option value="last_month">Last Month</option>
+                </select>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Actual Working Hours</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{formatMinutesAsHHMM(thisMonthActualWorkingMinutes)}</div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Working Days</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{thisMonthExpected.days}</div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Absent Days</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{thisMonthAbsentDays}</div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Present Days</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{thisMonthPresentDays}</div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Overtime</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{formatMinutesAsHHMM(thisMonthOvertimeMinutes)}</div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Gap</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{formatMinutesAsHHMM(thisMonthGapMinutes)}</div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Gap (After 3x)</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{formatMinutesAsHHMM(thisMonthGapAfterPenaltyMinutes)}</div>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Monthly Salary ({salarySummary.monthLabel})</div>
+                <input
+                  type="number"
+                  className="mt-1 w-full rounded-md border border-black/10 bg-white px-2 py-1 text-sm font-semibold text-heading"
+                  value={monthlySalaryInput}
+                  onChange={(e) => setMonthlySalaryInput(e.target.value)}
+                  min={0}
+                />
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Per Hour Salary</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{Number(salarySummary.perHourRate || 0).toFixed(2)}</div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Payable Days</div>
+                <div className="mt-1 text-sm font-semibold text-heading">
+                  {salarySummary.payableDays} / {salarySummary.workingDaysScope}
+                </div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Worked / Required</div>
+                <div className="mt-1 text-sm font-semibold text-heading">
+                  {formatMinutesAsHHMM(salarySummary.workedMinutes)} / {formatMinutesAsHHMM(salarySummary.totalRequired)}
+                </div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Late/Early Deduction</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{Math.round(salarySummary.lateEarlyDeduction).toLocaleString()}</div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Overtime Pay (1.0x)</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{Math.round(salarySummary.overtimePay).toLocaleString()}</div>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/5 px-3 py-2">
+                <div className="text-[11px] text-black/60">Final Salary</div>
+                <div className="mt-1 text-sm font-semibold text-heading">{Math.round(salarySummary.finalSalary).toLocaleString()}</div>
+              </div>
             </div>
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-black/5 text-black/70">
                   <tr>
                     <th className="px-3 py-2 text-left">Date</th>
+                    <th className="px-3 py-2 text-left">Day</th>
                     <th className="px-3 py-2 text-left">First Login</th>
                     <th className="px-3 py-2 text-left">Last Logout</th>
                     <th className="px-3 py-2 text-right">Hours</th>
+                    <th className="px-3 py-2 text-right">Overtime</th>
+                    <th className="px-3 py-2 text-right">Late In</th>
+                    <th className="px-3 py-2 text-right">Early Out</th>
+                    <th className="px-3 py-2 text-left">Status</th>
+                    <th className="px-3 py-2 text-right">Manual</th>
                   </tr>
                 </thead>
                 <tbody>
                   {displayWorkByDay.map((d) => (
+                    (() => {
+                      const sh = shiftByDate.get(d.date) || null;
+                      let lateInMin = null;
+                      let earlyOutMin = null;
+                      const requiredMinutes = d?.halfDay ? 4 * 60 : 8 * 60;
+                      if (sh) {
+                        const pad2 = (n) => String(n).padStart(2, "0");
+                        const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
+                        const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
+                        const shiftStart = new Date(`${d.date}T${pad2(shh)}:${pad2(sm)}:00`);
+                        const shiftEnd = new Date(`${d.date}T${pad2(ehh)}:${pad2(em)}:00`);
+                        if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
+                        if (d.firstIn) lateInMin = Math.max(0, Math.floor((d.firstIn.getTime() - shiftStart.getTime()) / 60000));
+                        if (!d?.halfDay && d.minutes < 8 * 60 && d.lastOut) earlyOutMin = Math.max(0, Math.floor((shiftEnd.getTime() - d.lastOut.getTime()) / 60000));
+                      }
+                      const formatDelta = (mins) => (Number.isFinite(mins) && mins > 0 ? formatMinutesAsHHMM(mins) : "-");
+                      const overtimeMin = Math.max(0, Number(d.minutes || 0) - requiredMinutes);
+                      const isAbsent = !d.firstIn && !d.lastOut;
+                      const statusParts = [];
+                      if (Number.isFinite(lateInMin) && lateInMin > 30) statusParts.push("Late");
+                      if (Number(d.minutes || 0) > 0 && Number(d.minutes || 0) < requiredMinutes && d.lastOut) statusParts.push("Early Left");
+                      if (d?.halfDay) statusParts.push("Half Day");
+                      const isToday = String(d.date) === todayKey;
+                      const status = isAbsent ? (isToday ? "Pending" : "Absent") : statusParts.length ? statusParts.join(" & ") : "-";
+                      const dayName = (() => {
+                        const dt = new Date(`${String(d.date).slice(0, 10)}T00:00:00`);
+                        const names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+                        const idx = dt.getDay();
+                        return names[idx] || "-";
+                      })();
+                      return (
                     <tr key={d.date} className="border-t">
                       <td className="px-3 py-2">{formatDateCustom(d.date)}</td>
+                      <td className="px-3 py-2">{dayName}</td>
                       <td className="px-3 py-2">{d.firstIn ? formatLocalTime12(d.firstIn) : "-"}</td>
                       <td className="px-3 py-2">{d.lastOut ? formatLocalTime12(d.lastOut) : "-"}</td>
                       <td className="px-3 py-2 text-right">{formatMinutesAsHHMM(d.minutes)}</td>
+                      <td className="px-3 py-2 text-right">{overtimeMin > 0 ? formatMinutesAsHHMM(overtimeMin) : "-"}</td>
+                      <td className="px-3 py-2 text-right">{formatDelta(lateInMin)}</td>
+                      <td className="px-3 py-2 text-right">{formatDelta(earlyOutMin)}</td>
+                      <td className="px-3 py-2">{status}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button className="rounded-md border border-black/10 px-2 py-1 hover:bg-black/5" onClick={() => openManualSessionModal(d)}>
+                          Set
+                        </button>
+                      </td>
                     </tr>
+                      );
+                    })()
                   ))}
                   {displayWorkByDay.length === 0 && (
                     <tr>
-                      <td className="px-3 py-6 text-center text-black/60" colSpan={4}>
+                      <td className="px-3 py-6 text-center text-black/60" colSpan={10}>
                         No work sessions yet.
                       </td>
                     </tr>
@@ -386,6 +1071,60 @@ export default function UserDetailPage() {
             </div>
           </div>
         </div>
+
+        {showAddSession && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-lg rounded-xl bg-white p-4 shadow-lg">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold text-heading">Manual Attendance</div>
+                <button className="rounded-md border border-black/10 px-2 py-1 hover:bg-black/5" onClick={() => setShowAddSession(false)}>
+                  Close
+                </button>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-3">
+                <div className="text-xs text-black/60">Date: {addSessionForm.work_date ? formatDateCustom(addSessionForm.work_date) : "-"}</div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(addSessionForm.half_day)}
+                    onChange={(e) => setAddSessionForm((f) => ({ ...f, half_day: e.target.checked }))}
+                  />
+                  Half Day
+                </label>
+                <label className="grid gap-1">
+                  <div className="text-xs text-black/60">First Login</div>
+                  <input
+                    type="datetime-local"
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    value={addSessionForm.login_at}
+                    onChange={(e) => setAddSessionForm((f) => ({ ...f, login_at: e.target.value }))}
+                  />
+                </label>
+                <label className="grid gap-1">
+                  <div className="text-xs text-black/60">Last Logout</div>
+                  <input
+                    type="datetime-local"
+                    className="rounded-md border border-black/10 px-2 py-2"
+                    value={addSessionForm.logout_at}
+                    onChange={(e) => setAddSessionForm((f) => ({ ...f, logout_at: e.target.value }))}
+                  />
+                </label>
+              </div>
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={() => setShowAddSession(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
+                  disabled={addingSession || !addSessionForm.work_date || !addSessionForm.login_at || !addSessionForm.logout_at}
+                  onClick={saveManualSession}
+                >
+                  {addingSession ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="rounded-xl border border-black/10 bg-white p-4 shadow-sm">
           {error && <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}

@@ -1,7 +1,7 @@
 import { supabaseServer } from "@/lib/supabaseServer";
 
 export async function GET() {
-  const orgName = "HybridOne CRM";
+  const orgName = "Hybrid One CRM";
   let orgId = null;
 
   const { data: orgs } = await supabaseServer
