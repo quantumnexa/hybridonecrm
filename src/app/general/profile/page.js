@@ -4,6 +4,43 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, getUserCached } from "@/lib/supabase";
 import { formatDateCustom, formatLocalTime12, formatMinutesAsHHMM } from "@/lib/timeFormat";
 
+function normalizeHalfDayPart(v) {
+  const t = String(v || "").trim().toLowerCase();
+  return t === "first" || t === "second" ? t : "";
+}
+
+function buildShiftStartEndMs(dateKey, shift) {
+  if (!dateKey || !shift?.start_time || !shift?.end_time) return null;
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const [shh, sm] = String(shift.start_time || "09:00").split(":").map((x) => Number(x || 0));
+  const [ehh, em] = String(shift.end_time || "18:00").split(":").map((x) => Number(x || 0));
+  const shiftStartMs = new Date(`${dateKey}T${pad2(shh)}:${pad2(sm)}:00`).getTime();
+  let shiftEndMs = new Date(`${dateKey}T${pad2(ehh)}:${pad2(em)}:00`).getTime();
+  if (shift.is_night || shiftEndMs <= shiftStartMs) shiftEndMs += 24 * 3600 * 1000;
+  const midMs = shiftStartMs + Math.floor((shiftEndMs - shiftStartMs) / 2);
+  return { shiftStartMs, shiftEndMs, midMs };
+}
+
+function resolveHalfDayPart({ explicitPart, firstIn, midMs }) {
+  const p = normalizeHalfDayPart(explicitPart);
+  if (p) return p;
+  if (firstIn instanceof Date && Number.isFinite(firstIn.getTime()) && Number.isFinite(midMs)) {
+    const thresholdMs = midMs - 15 * 60 * 1000;
+    return firstIn.getTime() >= thresholdMs ? "second" : "first";
+  }
+  return "first";
+}
+
+function getShiftSegmentMs({ dateKey, shift, isHalfDay, halfDayPart, firstIn }) {
+  const base = buildShiftStartEndMs(dateKey, shift);
+  if (!base) return null;
+  if (!isHalfDay) return { segStartMs: base.shiftStartMs, segEndMs: base.shiftEndMs, halfDayPart: "" };
+  const part = resolveHalfDayPart({ explicitPart: halfDayPart, firstIn, midMs: base.midMs });
+  return part === "second"
+    ? { segStartMs: base.midMs, segEndMs: base.shiftEndMs, halfDayPart: part }
+    : { segStartMs: base.shiftStartMs, segEndMs: base.midMs, halfDayPart: part };
+}
+
 export default function Page() {
   const [userEmail, setUserEmail] = useState("");
   const [profile, setProfile] = useState(null);
@@ -214,23 +251,26 @@ export default function Page() {
         .slice(0, 31)
         .trim() || "Sheet";
 
-    const pad2 = (n) => String(n).padStart(2, "0");
-
     const calcLateEarly = (dayRow) => {
       const sh = shiftByDate.get(dayRow.date) || null;
-      if (!sh) return { lateInMin: null, earlyOutMin: null };
-      const isHalfDay = Boolean(dayRow?.halfDay);
-      const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
-      const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
-      const shiftStart = new Date(`${dayRow.date}T${pad2(shh)}:${pad2(sm)}:00`);
-      const shiftEnd = new Date(`${dayRow.date}T${pad2(ehh)}:${pad2(em)}:00`);
-      if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
-      const lateInMin = dayRow.firstIn ? Math.max(0, Math.floor((dayRow.firstIn.getTime() - shiftStart.getTime()) / 60000)) : null;
-      const earlyOutMin =
-        !isHalfDay && Number(dayRow.minutes || 0) < 8 * 60 && dayRow.lastOut
-          ? Math.max(0, Math.floor((shiftEnd.getTime() - dayRow.lastOut.getTime()) / 60000))
+      if (!sh) return { lateInMin: null, earlyOutMin: null, halfDayPart: "" };
+      const seg = getShiftSegmentMs({
+        dateKey: String(dayRow.date || "").slice(0, 10),
+        shift: sh,
+        isHalfDay: Boolean(dayRow?.halfDay),
+        halfDayPart: dayRow?.halfDayPart,
+        firstIn: dayRow?.firstIn,
+      });
+      if (!seg) return { lateInMin: null, earlyOutMin: null, halfDayPart: "" };
+      const reqMin = dayRow?.halfDay ? 4 * 60 : 8 * 60;
+      const lateInMinRaw = dayRow.firstIn ? Math.max(0, Math.floor((dayRow.firstIn.getTime() - seg.segStartMs) / 60000)) : null;
+      const earlyOutMinRaw =
+        dayRow.lastOut && Number(dayRow.minutes || 0) > 0 && Number(dayRow.minutes || 0) < reqMin
+          ? Math.max(0, Math.floor((seg.segEndMs - dayRow.lastOut.getTime()) / 60000))
           : null;
-      return { lateInMin, earlyOutMin };
+      const lateInMin = dayRow?.ignoreLate ? 0 : lateInMinRaw;
+      const earlyOutMin = dayRow?.ignoreEarly ? 0 : earlyOutMinRaw;
+      return { lateInMin, earlyOutMin, halfDayPart: seg.halfDayPart || "" };
     };
 
     const byMonth = new Map();
@@ -247,13 +287,13 @@ export default function Page() {
     for (let d = new Date(toDate); d >= fromDate; d.setDate(d.getDate() - 1)) {
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       if (isWeekendKey(key)) continue;
-      const row = byDay.get(key) || { date: key, minutes: 0, firstIn: null, lastOut: null, halfDay: false };
+      const row = byDay.get(key) || { date: key, minutes: 0, firstIn: null, lastOut: null, halfDay: false, halfDayPart: "", ignoreLate: false, ignoreEarly: false };
       const monthKey = key.slice(0, 7);
       if (!byMonth.has(monthKey)) byMonth.set(monthKey, []);
       byMonth.get(monthKey).push(row);
     }
 
-    const header = ["Date", "Day", "First Login", "Last Logout", "Hours", "Overtime", "Late In", "Early Out", "Status", "Half Day"];
+    const header = ["Date", "Day", "First Login", "Last Logout", "Hours", "Overtime", "Late In", "Early Out", "Status", "Half Day", "Half Day Part"];
     const monthKeys = Array.from(byMonth.keys()).sort((a, b) => (a > b ? -1 : 1));
 
     const wb = XLSX.utils.book_new();
@@ -319,14 +359,18 @@ export default function Page() {
         ...summaryAoa,
         header,
         ...rows.map((d) => {
-          const { lateInMin, earlyOutMin } = calcLateEarly(d);
+          const { lateInMin, earlyOutMin, halfDayPart } = calcLateEarly(d);
           const isAbsent = !d.firstIn && !d.lastOut;
           const requiredMinutes = d?.halfDay ? 4 * 60 : 8 * 60;
           const overtimeMin = Math.max(0, Number(d.minutes || 0) - requiredMinutes);
           const statusParts = [];
           if (Number.isFinite(lateInMin) && lateInMin > 30) statusParts.push("Late");
           if (Number(d.minutes || 0) > 0 && Number(d.minutes || 0) < requiredMinutes && d.lastOut) statusParts.push("Early Left");
-          if (d?.halfDay) statusParts.push("Half Day");
+          if (d?.halfDay) {
+            statusParts.push("Half Day");
+            if (halfDayPart === "second") statusParts.push("Second Half");
+            if (halfDayPart === "first") statusParts.push("First Half");
+          }
           const isToday = String(d.date) === todayKey;
           const status = isAbsent ? (isToday ? "Pending" : "Absent") : statusParts.length ? statusParts.join(" & ") : "-";
           const dayName = (() => {
@@ -346,6 +390,7 @@ export default function Page() {
             Number.isFinite(earlyOutMin) && earlyOutMin > 0 ? formatMinutesAsHHMM(earlyOutMin) : "",
             status,
             d?.halfDay ? "Yes" : "No",
+            d?.halfDay ? (halfDayPart || "") : "",
           ];
         }),
       ];
@@ -377,7 +422,7 @@ export default function Page() {
     (sessions || []).forEach((s) => {
       const d = s.work_date || (s.login_at ? String(s.login_at).slice(0, 10) : "");
       if (!d) return;
-      if (!map[d]) map[d] = { date: d, minutes: 0, firstIn: null, lastOut: null, halfDay: false };
+      if (!map[d]) map[d] = { date: d, minutes: 0, firstIn: null, lastOut: null, halfDay: false, halfDayPart: "", ignoreLate: false, ignoreEarly: false };
 
       let mins = Number(s.duration_minutes || 0);
       const li = s.login_at ? new Date(s.login_at) : null;
@@ -391,6 +436,10 @@ export default function Page() {
       if (li && (!map[d].firstIn || li < map[d].firstIn)) map[d].firstIn = li;
       if (lo && (!map[d].lastOut || lo > map[d].lastOut)) map[d].lastOut = lo;
       if (s?.half_day) map[d].halfDay = true;
+      const part = normalizeHalfDayPart(s?.half_day_part);
+      if (part && !map[d].halfDayPart) map[d].halfDayPart = part;
+      if (s?.ignore_late) map[d].ignoreLate = true;
+      if (s?.ignore_early) map[d].ignoreEarly = true;
     });
     return Object.values(map).sort((a, b) => (a.date < b.date ? 1 : -1));
   }, [sessions, nowTs]);
@@ -437,6 +486,7 @@ export default function Page() {
           firstIn: null,
           lastOut: null,
           halfDay: false,
+          halfDayPart: "",
         }
       );
     }
@@ -476,7 +526,6 @@ export default function Page() {
     const m = String(now.getMonth() + 1).padStart(2, "0");
     let fromKey = `${y}-${m}-01`;
     if (joinKey && joinKey > fromKey) fromKey = joinKey;
-    const pad2 = (n) => String(n).padStart(2, "0");
     let sum = 0;
 
     (workByDay || []).forEach((d) => {
@@ -485,20 +534,29 @@ export default function Page() {
       if (isWeekendKey(key)) return;
       const sh = shiftByDate.get(key) || null;
       if (!sh) return;
-      const isHalfDay = Boolean(d?.halfDay);
+      const seg = getShiftSegmentMs({
+        dateKey: key,
+        shift: sh,
+        isHalfDay: Boolean(d?.halfDay),
+        halfDayPart: d?.halfDayPart,
+        firstIn: d?.firstIn,
+      });
+      if (!seg) return;
 
-      const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
-      const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
-      const shiftStart = new Date(`${key}T${pad2(shh)}:${pad2(sm)}:00`);
-      const shiftEnd = new Date(`${key}T${pad2(ehh)}:${pad2(em)}:00`);
-      if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
+      const reqMin = d?.halfDay ? 4 * 60 : 8 * 60;
 
-      if (d?.firstIn instanceof Date && Number.isFinite(d.firstIn.getTime())) {
-        const mins = Math.floor((d.firstIn.getTime() - shiftStart.getTime()) / 60000);
+      if (!d?.ignoreLate && d?.firstIn instanceof Date && Number.isFinite(d.firstIn.getTime())) {
+        const mins = Math.floor((d.firstIn.getTime() - seg.segStartMs) / 60000);
         if (mins > 30) sum += mins;
       }
-      if (!isHalfDay && Number(d?.minutes || 0) < 8 * 60 && d?.lastOut instanceof Date && Number.isFinite(d.lastOut.getTime())) {
-        const mins = Math.floor((shiftEnd.getTime() - d.lastOut.getTime()) / 60000);
+      if (
+        !d?.ignoreEarly &&
+        d?.lastOut instanceof Date &&
+        Number.isFinite(d.lastOut.getTime()) &&
+        Number(d?.minutes || 0) > 0 &&
+        Number(d?.minutes || 0) < reqMin
+      ) {
+        const mins = Math.floor((seg.segEndMs - d.lastOut.getTime()) / 60000);
         if (mins > 30) sum += mins;
       }
     });
@@ -796,22 +854,34 @@ export default function Page() {
                     let earlyOutMin = null;
                     const requiredMinutes = d?.halfDay ? 4 * 60 : 8 * 60;
                     if (sh) {
-                      const pad2 = (n) => String(n).padStart(2, "0");
-                      const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
-                      const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
-                      const shiftStart = new Date(`${d.date}T${pad2(shh)}:${pad2(sm)}:00`);
-                      const shiftEnd = new Date(`${d.date}T${pad2(ehh)}:${pad2(em)}:00`);
-                      if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
-                      if (d.firstIn) lateInMin = Math.max(0, Math.floor((d.firstIn.getTime() - shiftStart.getTime()) / 60000));
-                      if (!d?.halfDay && d.minutes < 8 * 60 && d.lastOut) earlyOutMin = Math.max(0, Math.floor((shiftEnd.getTime() - d.lastOut.getTime()) / 60000));
+                      const seg = getShiftSegmentMs({
+                        dateKey: String(d.date || "").slice(0, 10),
+                        shift: sh,
+                        isHalfDay: Boolean(d?.halfDay),
+                        halfDayPart: d?.halfDayPart,
+                        firstIn: d?.firstIn,
+                      });
+                      if (seg) {
+                        if (d.firstIn) lateInMin = Math.max(0, Math.floor((d.firstIn.getTime() - seg.segStartMs) / 60000));
+                        if (d.lastOut && Number(d.minutes || 0) > 0 && Number(d.minutes || 0) < requiredMinutes) {
+                          earlyOutMin = Math.max(0, Math.floor((seg.segEndMs - d.lastOut.getTime()) / 60000));
+                        }
+                      }
                     }
+                      if (d?.ignoreLate) lateInMin = 0;
+                      if (d?.ignoreEarly) earlyOutMin = 0;
                     const formatDelta = (mins) => (Number.isFinite(mins) && mins > 0 ? formatMinutesAsHHMM(mins) : "-");
                     const overtimeMin = Math.max(0, Number(d.minutes || 0) - requiredMinutes);
                     const isAbsent = !d.firstIn && !d.lastOut;
                     const statusParts = [];
                     if (Number.isFinite(lateInMin) && lateInMin > 30) statusParts.push("Late");
                     if (Number(d.minutes || 0) > 0 && Number(d.minutes || 0) < requiredMinutes && d.lastOut) statusParts.push("Early Left");
-                    if (d?.halfDay) statusParts.push("Half Day");
+                    if (d?.halfDay) {
+                      statusParts.push("Half Day");
+                      const p = normalizeHalfDayPart(d?.halfDayPart);
+                      if (p === "second") statusParts.push("Second Half");
+                      if (p === "first") statusParts.push("First Half");
+                    }
                     const isToday = String(d.date) === todayKey;
                     const status = isAbsent ? (isToday ? "Pending" : "Absent") : statusParts.length ? statusParts.join(" & ") : "-";
                     const dayName = (() => {

@@ -63,10 +63,66 @@ function endOfLocalDay(d) {
   return x;
 }
 
+function parseTimeParts(t) {
+  const [hh, mm] = String(t || "").split(":").map((x) => Number(x || 0));
+  return { hh: Number.isFinite(hh) ? hh : 0, mm: Number.isFinite(mm) ? mm : 0 };
+}
+
+function shiftRangeForDateKey(dateKey, shift, opts) {
+  if (!dateKey || !shift?.start_time || !shift?.end_time) return null;
+  const postGraceMinutes = Number(opts?.postGraceMinutes ?? 360);
+  const preGraceMinutes = Number(opts?.preGraceMinutes ?? 0);
+  const { hh: sh, mm: sm } = parseTimeParts(shift.start_time);
+  const { hh: eh, mm: em } = parseTimeParts(shift.end_time);
+  const startMs = new Date(`${dateKey}T${String(sh).padStart(2, "0")}:${String(sm).padStart(2, "0")}:00`).getTime();
+  let endMs = new Date(`${dateKey}T${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}:00`).getTime();
+  if (endMs <= startMs) endMs += 24 * 3600 * 1000;
+  const graceStartMs = startMs - Math.max(0, preGraceMinutes) * 60000;
+  const graceEndMs = endMs + Math.max(0, postGraceMinutes) * 60000;
+  return { startMs, endMs, graceStartMs, graceEndMs };
+}
+
+async function resolveWorkDateForNow({ userId, now }) {
+  const n = now instanceof Date ? now : new Date(now);
+  const nowTs = n.getTime();
+  const todayKey = localDateKey(n);
+  const y = new Date(n);
+  y.setDate(y.getDate() - 1);
+  const yKey = localDateKey(y);
+
+  const { data: assigns } = await supabase
+    .from("shift_assignments")
+    .select("work_date, shift_id")
+    .eq("user_id", userId)
+    .in("work_date", [todayKey, yKey]);
+
+  const rows = (assigns || []).filter((a) => a?.work_date && a?.shift_id);
+  const shiftIds = Array.from(new Set(rows.map((a) => a.shift_id)));
+  const { data: sh } = shiftIds.length ? await supabase.from("shifts").select("*").in("id", shiftIds) : { data: [] };
+  const shiftById = new Map((sh || []).map((s) => [s.id, s]));
+
+  const candidates = rows
+    .map((a) => {
+      const shift = shiftById.get(a.shift_id) || null;
+      const key = String(a.work_date).slice(0, 10);
+      const range = shiftRangeForDateKey(key, shift, { postGraceMinutes: 360, preGraceMinutes: 0 });
+      if (!range) return null;
+      const inWindow = nowTs >= range.graceStartMs && nowTs <= range.graceEndMs;
+      return { key, inWindow, startMs: range.startMs };
+    })
+    .filter(Boolean);
+
+  const match = candidates
+    .filter((c) => c.inWindow)
+    .sort((a, b) => b.startMs - a.startMs)[0];
+
+  return match?.key || todayKey;
+}
+
 export async function startWorkSession({ userId, role }) {
   if (!supabaseConfigured || !userId) return;
   const now = new Date();
-  const workDate = localDateKey(now);
+  const workDate = await resolveWorkDateForNow({ userId, now });
   // Check for ANY open session, regardless of work_date
   const { data: openAny } = await supabase
     .from("work_sessions")

@@ -20,7 +20,8 @@ function buildShiftWindow(dateKey, shift) {
   let endMs = new Date(`${dateKey}T${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}:00`).getTime();
   if (endMs <= startMs) endMs += 24 * 3600 * 1000;
   const shiftSeconds = Math.max(0, Math.floor((endMs - startMs) / 1000));
-  return { startMs, endMs, shiftSeconds };
+  const attendanceEndMs = endMs + 6 * 3600 * 1000;
+  return { startMs, endMs, attendanceEndMs, shiftSeconds };
 }
 
 export default function ClockWidget() {
@@ -103,11 +104,11 @@ export default function ClockWidget() {
     let shift = shToday || shY || null;
     let baseKey = key;
     let win = wToday || wY || null;
-    if (wToday && refTs >= wToday.startMs && refTs < wToday.endMs) {
+    if (wToday && refTs >= wToday.startMs && refTs < wToday.attendanceEndMs) {
       shift = shToday;
       baseKey = key;
       win = wToday;
-    } else if (wY && refTs >= wY.startMs && refTs < wY.endMs) {
+    } else if (wY && refTs >= wY.startMs && refTs < wY.attendanceEndMs) {
       shift = shY;
       baseKey = yKey;
       win = wY;

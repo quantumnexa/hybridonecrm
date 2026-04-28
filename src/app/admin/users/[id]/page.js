@@ -6,6 +6,43 @@ import { supabase, getUserCached } from "@/lib/supabase";
 import Link from "next/link";
 import { formatMinutesAsHHMM, formatLocalDateTime12, formatLocalTime12, formatDateCustom } from "@/lib/timeFormat";
 
+function normalizeHalfDayPart(v) {
+  const t = String(v || "").trim().toLowerCase();
+  return t === "first" || t === "second" ? t : "";
+}
+
+function buildShiftStartEndMs(dateKey, shift) {
+  if (!dateKey || !shift?.start_time || !shift?.end_time) return null;
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const [shh, sm] = String(shift.start_time || "09:00").split(":").map((x) => Number(x || 0));
+  const [ehh, em] = String(shift.end_time || "18:00").split(":").map((x) => Number(x || 0));
+  const shiftStartMs = new Date(`${dateKey}T${pad2(shh)}:${pad2(sm)}:00`).getTime();
+  let shiftEndMs = new Date(`${dateKey}T${pad2(ehh)}:${pad2(em)}:00`).getTime();
+  if (shift.is_night || shiftEndMs <= shiftStartMs) shiftEndMs += 24 * 3600 * 1000;
+  const midMs = shiftStartMs + Math.floor((shiftEndMs - shiftStartMs) / 2);
+  return { shiftStartMs, shiftEndMs, midMs };
+}
+
+function resolveHalfDayPart({ explicitPart, firstIn, midMs }) {
+  const p = normalizeHalfDayPart(explicitPart);
+  if (p) return p;
+  if (firstIn instanceof Date && Number.isFinite(firstIn.getTime()) && Number.isFinite(midMs)) {
+    const thresholdMs = midMs - 15 * 60 * 1000;
+    return firstIn.getTime() >= thresholdMs ? "second" : "first";
+  }
+  return "first";
+}
+
+function getShiftSegmentMs({ dateKey, shift, isHalfDay, halfDayPart, firstIn }) {
+  const base = buildShiftStartEndMs(dateKey, shift);
+  if (!base) return null;
+  if (!isHalfDay) return { segStartMs: base.shiftStartMs, segEndMs: base.shiftEndMs, halfDayPart: "" };
+  const part = resolveHalfDayPart({ explicitPart: halfDayPart, firstIn, midMs: base.midMs });
+  return part === "second"
+    ? { segStartMs: base.midMs, segEndMs: base.shiftEndMs, halfDayPart: part }
+    : { segStartMs: base.shiftStartMs, segEndMs: base.midMs, halfDayPart: part };
+}
+
 export default function UserDetailPage() {
   const { id } = useParams();
   const [user, setUser] = useState(null);
@@ -25,8 +62,17 @@ export default function UserDetailPage() {
   const [attachFiles, setAttachFiles] = useState({});
   const [nowTs, setNowTs] = useState(0);
   const [attendanceRange, setAttendanceRange] = useState("this_month");
+  const [manualOverridesByDay, setManualOverridesByDay] = useState({});
   const [showAddSession, setShowAddSession] = useState(false);
-  const [addSessionForm, setAddSessionForm] = useState({ work_date: "", login_at: "", logout_at: "", half_day: false });
+  const [addSessionForm, setAddSessionForm] = useState({
+    work_date: "",
+    login_at: "",
+    logout_at: "",
+    half_day: false,
+    half_day_part: "first",
+    ignore_late: false,
+    ignore_early: false,
+  });
   const [addingSession, setAddingSession] = useState(false);
   const [monthlySalaryInput, setMonthlySalaryInput] = useState("45000");
 
@@ -132,7 +178,7 @@ export default function UserDetailPage() {
     (workSessions || []).forEach((s) => {
       const d = s.work_date || (s.login_at ? String(s.login_at).slice(0, 10) : "");
       if (!d) return;
-      if (!map[d]) map[d] = { date: d, minutes: 0, firstIn: null, lastOut: null, halfDay: false };
+      if (!map[d]) map[d] = { date: d, minutes: 0, firstIn: null, lastOut: null, halfDay: false, halfDayPart: "", ignoreLate: false, ignoreEarly: false };
       
       let mins = Number(s.duration_minutes || 0);
       const li = s.login_at ? new Date(s.login_at) : null;
@@ -146,9 +192,21 @@ export default function UserDetailPage() {
       if (li && (!map[d].firstIn || li < map[d].firstIn)) map[d].firstIn = li;
       if (lo && (!map[d].lastOut || lo > map[d].lastOut)) map[d].lastOut = lo;
       if (s?.half_day) map[d].halfDay = true;
+      const part = normalizeHalfDayPart(s?.half_day_part);
+      if (part && !map[d].halfDayPart) map[d].halfDayPart = part;
+      if (s?.ignore_late) map[d].ignoreLate = true;
+      if (s?.ignore_early) map[d].ignoreEarly = true;
+    });
+    Object.keys(manualOverridesByDay || {}).forEach((k) => {
+      const key = String(k || "").slice(0, 10);
+      if (!key) return;
+      if (!map[key]) map[key] = { date: key, minutes: 0, firstIn: null, lastOut: null, halfDay: false, halfDayPart: "", ignoreLate: false, ignoreEarly: false };
+      const o = manualOverridesByDay?.[key] || {};
+      if (typeof o?.ignoreLate === "boolean") map[key].ignoreLate = o.ignoreLate;
+      if (typeof o?.ignoreEarly === "boolean") map[key].ignoreEarly = o.ignoreEarly;
     });
     return Object.values(map).sort((a, b) => (a.date < b.date ? 1 : -1));
-  }, [workSessions, nowTs]);
+  }, [manualOverridesByDay, workSessions, nowTs]);
 
   const displayWorkByDay = useMemo(() => {
     const today = new Date(nowTs || Date.now());
@@ -191,6 +249,9 @@ export default function UserDetailPage() {
           firstIn: null,
           lastOut: null,
           halfDay: false,
+          halfDayPart: "",
+          ignoreLate: false,
+          ignoreEarly: false,
         }
       );
     }
@@ -230,7 +291,6 @@ export default function UserDetailPage() {
     const m = String(now.getMonth() + 1).padStart(2, "0");
     let fromKey = `${y}-${m}-01`;
     if (joinKey && joinKey > fromKey) fromKey = joinKey;
-    const pad2 = (n) => String(n).padStart(2, "0");
     let sum = 0;
 
     (workByDay || []).forEach((d) => {
@@ -239,20 +299,29 @@ export default function UserDetailPage() {
       if (isWeekendKey(key)) return;
       const sh = shiftByDate.get(key) || null;
       if (!sh) return;
-      const isHalfDay = Boolean(d?.halfDay);
+      const seg = getShiftSegmentMs({
+        dateKey: key,
+        shift: sh,
+        isHalfDay: Boolean(d?.halfDay),
+        halfDayPart: d?.halfDayPart,
+        firstIn: d?.firstIn,
+      });
+      if (!seg) return;
 
-      const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
-      const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
-      const shiftStart = new Date(`${key}T${pad2(shh)}:${pad2(sm)}:00`);
-      const shiftEnd = new Date(`${key}T${pad2(ehh)}:${pad2(em)}:00`);
-      if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
+      const reqMin = d?.halfDay ? 4 * 60 : 8 * 60;
 
-      if (d?.firstIn instanceof Date && Number.isFinite(d.firstIn.getTime())) {
-        const mins = Math.floor((d.firstIn.getTime() - shiftStart.getTime()) / 60000);
+      if (!d?.ignoreLate && d?.firstIn instanceof Date && Number.isFinite(d.firstIn.getTime())) {
+        const mins = Math.floor((d.firstIn.getTime() - seg.segStartMs) / 60000);
         if (mins > 30) sum += mins;
       }
-      if (!isHalfDay && Number(d?.minutes || 0) < 8 * 60 && d?.lastOut instanceof Date && Number.isFinite(d.lastOut.getTime())) {
-        const mins = Math.floor((shiftEnd.getTime() - d.lastOut.getTime()) / 60000);
+      if (
+        !d?.ignoreEarly &&
+        d?.lastOut instanceof Date &&
+        Number.isFinite(d.lastOut.getTime()) &&
+        Number(d?.minutes || 0) > 0 &&
+        Number(d?.minutes || 0) < reqMin
+      ) {
+        const mins = Math.floor((seg.segEndMs - d.lastOut.getTime()) / 60000);
         if (mins > 30) sum += mins;
       }
     });
@@ -441,19 +510,22 @@ export default function UserDetailPage() {
 
         const sh = shiftByDate.get(k) || null;
         if (!sh) continue;
-
-        const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
-        const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
-        const shiftStart = new Date(`${k}T${pad2(shh)}:${pad2(sm)}:00`);
-        const shiftEnd = new Date(`${k}T${pad2(ehh)}:${pad2(em)}:00`);
-        if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
+        const seg = getShiftSegmentMs({
+          dateKey: k,
+          shift: sh,
+          isHalfDay: Boolean(row?.halfDay),
+          halfDayPart: row?.halfDayPart,
+          firstIn: row?.firstIn,
+        });
+        if (!seg) continue;
 
         if (row?.firstIn instanceof Date && Number.isFinite(row.firstIn.getTime())) {
-          const mins = Math.floor((row.firstIn.getTime() - shiftStart.getTime()) / 60000);
+          const mins = Math.floor((row.firstIn.getTime() - seg.segStartMs) / 60000);
           if (mins > 30) penaltyMinutes += mins;
         }
-        if (!row?.halfDay && Number(row?.minutes || 0) < 8 * 60 && row?.lastOut instanceof Date && Number.isFinite(row.lastOut.getTime())) {
-          const mins = Math.floor((shiftEnd.getTime() - row.lastOut.getTime()) / 60000);
+        const reqMin = row?.halfDay ? 4 * 60 : 8 * 60;
+        if (Number(row?.minutes || 0) > 0 && Number(row?.minutes || 0) < reqMin && row?.lastOut instanceof Date && Number.isFinite(row.lastOut.getTime())) {
+          const mins = Math.floor((seg.segEndMs - row.lastOut.getTime()) / 60000);
           if (mins > 30) penaltyMinutes += mins;
         }
       }
@@ -519,16 +591,26 @@ export default function UserDetailPage() {
       const dateKey = row?.date || "";
       const defaultLogin = dateKey ? `${dateKey}T09:00` : "";
       const defaultLogout = dateKey ? `${dateKey}T18:00` : "";
+      const isHalfDay = Boolean(row?.halfDay);
+      let halfDayPart = normalizeHalfDayPart(row?.halfDayPart);
+      if (!halfDayPart && isHalfDay) {
+        const sh = shiftByDate.get(dateKey) || null;
+        const base = buildShiftStartEndMs(dateKey, sh);
+        halfDayPart = resolveHalfDayPart({ explicitPart: "", firstIn: row?.firstIn, midMs: base?.midMs });
+      }
       setAddSessionForm({
         work_date: dateKey,
         login_at: row?.firstIn ? toIsoInputValue(row.firstIn) : defaultLogin,
         logout_at: row?.lastOut ? toIsoInputValue(row.lastOut) : defaultLogout,
-        half_day: Boolean(row?.halfDay),
+        half_day: isHalfDay,
+        half_day_part: halfDayPart || "first",
+        ignore_late: Boolean(row?.ignoreLate),
+        ignore_early: Boolean(row?.ignoreEarly),
       });
       setShowAddSession(true);
       setError("");
     },
-    [toIsoInputValue]
+    [shiftByDate, toIsoInputValue]
   );
 
   const saveManualSession = useCallback(async () => {
@@ -536,13 +618,13 @@ export default function UserDetailPage() {
     const workDate = String(addSessionForm.work_date || "").slice(0, 10);
     const loginVal = String(addSessionForm.login_at || "").trim();
     const logoutVal = String(addSessionForm.logout_at || "").trim();
-    if (!workDate || !loginVal || !logoutVal) {
-      setError("Please enter First Login and Last Logout.");
+    if (!workDate || !loginVal) {
+      setError("Please enter First Login.");
       return;
     }
     const li = new Date(loginVal);
-    const lo = new Date(logoutVal);
-    if (Number.isNaN(li.getTime()) || Number.isNaN(lo.getTime())) {
+    const lo = logoutVal ? new Date(logoutVal) : null;
+    if (Number.isNaN(li.getTime()) || (lo && Number.isNaN(lo.getTime()))) {
       setError("Invalid date/time.");
       return;
     }
@@ -556,22 +638,68 @@ export default function UserDetailPage() {
           user_id: id,
           work_date: workDate,
           login_at: li.toISOString(),
-          logout_at: lo.toISOString(),
+          logout_at: lo ? lo.toISOString() : null,
           half_day: Boolean(addSessionForm.half_day),
+          half_day_part: addSessionForm.half_day ? String(addSessionForm.half_day_part || "") : null,
+          ignore_late: Boolean(addSessionForm.ignore_late),
+          ignore_early: Boolean(addSessionForm.ignore_early),
           mode: "replace_day",
         }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error || "Failed to save manual attendance");
+      setManualOverridesByDay((prev) => {
+        const next = { ...(prev || {}) };
+        const v = { ignoreLate: Boolean(addSessionForm.ignore_late), ignoreEarly: Boolean(addSessionForm.ignore_early) };
+        if (!v.ignoreLate && !v.ignoreEarly) {
+          delete next[workDate];
+          return next;
+        }
+        next[workDate] = v;
+        return next;
+      });
       setShowAddSession(false);
-      setAddSessionForm({ work_date: "", login_at: "", logout_at: "", half_day: false });
+      setAddSessionForm({ work_date: "", login_at: "", logout_at: "", half_day: false, half_day_part: "first", ignore_late: false, ignore_early: false });
       await loadAll();
     } catch (e) {
       setError(e?.message || "Failed to save manual attendance");
     } finally {
       setAddingSession(false);
     }
-  }, [addSessionForm.half_day, addSessionForm.login_at, addSessionForm.logout_at, addSessionForm.work_date, id, loadAll]);
+  }, [addSessionForm.half_day, addSessionForm.half_day_part, addSessionForm.ignore_early, addSessionForm.ignore_late, addSessionForm.login_at, addSessionForm.logout_at, addSessionForm.work_date, id, loadAll]);
+
+  const clearManualDay = useCallback(async () => {
+    if (!id) return;
+    const workDate = String(addSessionForm.work_date || "").slice(0, 10);
+    if (!workDate) return;
+    setAddingSession(true);
+    setError("");
+    try {
+      const res = await fetch("/api/admin-work-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: id,
+          work_date: workDate,
+          mode: "delete_day",
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || "Failed to clear day attendance");
+      setManualOverridesByDay((prev) => {
+        const next = { ...(prev || {}) };
+        delete next[workDate];
+        return next;
+      });
+      setShowAddSession(false);
+      setAddSessionForm({ work_date: "", login_at: "", logout_at: "", half_day: false, half_day_part: "first", ignore_late: false, ignore_early: false });
+      await loadAll();
+    } catch (e) {
+      setError(e?.message || "Failed to clear day attendance");
+    } finally {
+      setAddingSession(false);
+    }
+  }, [addSessionForm.work_date, id, loadAll]);
 
   const exportAttendanceExcel = useCallback(async () => {
     const XLSX = await import("xlsx");
@@ -582,23 +710,26 @@ export default function UserDetailPage() {
         .slice(0, 31)
         .trim() || "Sheet";
 
-    const pad2 = (n) => String(n).padStart(2, "0");
-
     const calcLateEarly = (dayRow) => {
       const sh = shiftByDate.get(dayRow.date) || null;
-      if (!sh) return { lateInMin: null, earlyOutMin: null };
-      const isHalfDay = Boolean(dayRow?.halfDay);
-      const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
-      const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
-      const shiftStart = new Date(`${dayRow.date}T${pad2(shh)}:${pad2(sm)}:00`);
-      const shiftEnd = new Date(`${dayRow.date}T${pad2(ehh)}:${pad2(em)}:00`);
-      if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
-      const lateInMin = dayRow.firstIn ? Math.max(0, Math.floor((dayRow.firstIn.getTime() - shiftStart.getTime()) / 60000)) : null;
-      const earlyOutMin =
-        !isHalfDay && Number(dayRow.minutes || 0) < 8 * 60 && dayRow.lastOut
-          ? Math.max(0, Math.floor((shiftEnd.getTime() - dayRow.lastOut.getTime()) / 60000))
+      if (!sh) return { lateInMin: null, earlyOutMin: null, halfDayPart: "" };
+      const seg = getShiftSegmentMs({
+        dateKey: String(dayRow.date || "").slice(0, 10),
+        shift: sh,
+        isHalfDay: Boolean(dayRow?.halfDay),
+        halfDayPart: dayRow?.halfDayPart,
+        firstIn: dayRow?.firstIn,
+      });
+      if (!seg) return { lateInMin: null, earlyOutMin: null, halfDayPart: "" };
+      const reqMin = dayRow?.halfDay ? 4 * 60 : 8 * 60;
+      const lateInMinRaw = dayRow.firstIn ? Math.max(0, Math.floor((dayRow.firstIn.getTime() - seg.segStartMs) / 60000)) : null;
+      const earlyOutMinRaw =
+        dayRow.lastOut && Number(dayRow.minutes || 0) > 0 && Number(dayRow.minutes || 0) < reqMin
+          ? Math.max(0, Math.floor((seg.segEndMs - dayRow.lastOut.getTime()) / 60000))
           : null;
-      return { lateInMin, earlyOutMin };
+      const lateInMin = dayRow?.ignoreLate ? 0 : lateInMinRaw;
+      const earlyOutMin = dayRow?.ignoreEarly ? 0 : earlyOutMinRaw;
+      return { lateInMin, earlyOutMin, halfDayPart: seg.halfDayPart || "" };
     };
 
     const byMonth = new Map();
@@ -615,13 +746,13 @@ export default function UserDetailPage() {
     for (let d = new Date(toDate); d >= fromDate; d.setDate(d.getDate() - 1)) {
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       if (isWeekendKey(key)) continue;
-      const row = byDay.get(key) || { date: key, minutes: 0, firstIn: null, lastOut: null, halfDay: false };
+      const row = byDay.get(key) || { date: key, minutes: 0, firstIn: null, lastOut: null, halfDay: false, halfDayPart: "", ignoreLate: false, ignoreEarly: false };
       const monthKey = key.slice(0, 7);
       if (!byMonth.has(monthKey)) byMonth.set(monthKey, []);
       byMonth.get(monthKey).push(row);
     }
 
-    const header = ["Date", "Day", "First Login", "Last Logout", "Hours", "Overtime", "Late In", "Early Out", "Status", "Half Day"];
+    const header = ["Date", "Day", "First Login", "Last Logout", "Hours", "Overtime", "Late In", "Early Out", "Status", "Half Day", "Half Day Part"];
     const monthKeys = Array.from(byMonth.keys()).sort((a, b) => (a > b ? -1 : 1));
 
     const wb = XLSX.utils.book_new();
@@ -687,14 +818,18 @@ export default function UserDetailPage() {
         ...summaryAoa,
         header,
         ...rows.map((d) => {
-          const { lateInMin, earlyOutMin } = calcLateEarly(d);
+          const { lateInMin, earlyOutMin, halfDayPart } = calcLateEarly(d);
           const isAbsent = !d.firstIn && !d.lastOut;
           const requiredMinutes = d?.halfDay ? 4 * 60 : 8 * 60;
           const overtimeMin = Math.max(0, Number(d.minutes || 0) - requiredMinutes);
           const statusParts = [];
           if (Number.isFinite(lateInMin) && lateInMin > 30) statusParts.push("Late");
           if (Number(d.minutes || 0) > 0 && Number(d.minutes || 0) < requiredMinutes && d.lastOut) statusParts.push("Early Left");
-          if (d?.halfDay) statusParts.push("Half Day");
+          if (d?.halfDay) {
+            statusParts.push("Half Day");
+            if (halfDayPart === "second") statusParts.push("Second Half");
+            if (halfDayPart === "first") statusParts.push("First Half");
+          }
           const isToday = String(d.date) === todayKey;
           const status = isAbsent ? (isToday ? "Pending" : "Absent") : statusParts.length ? statusParts.join(" & ") : "-";
           const dayName = (() => {
@@ -714,6 +849,7 @@ export default function UserDetailPage() {
             Number.isFinite(earlyOutMin) && earlyOutMin > 0 ? formatMinutesAsHHMM(earlyOutMin) : "",
             status,
             d?.halfDay ? "Yes" : "No",
+            d?.halfDay ? (halfDayPart || "") : "",
           ];
         }),
       ];
@@ -1015,22 +1151,34 @@ export default function UserDetailPage() {
                       let earlyOutMin = null;
                       const requiredMinutes = d?.halfDay ? 4 * 60 : 8 * 60;
                       if (sh) {
-                        const pad2 = (n) => String(n).padStart(2, "0");
-                        const [shh, sm] = String(sh.start_time || "09:00").split(":").map((x) => Number(x || 0));
-                        const [ehh, em] = String(sh.end_time || "18:00").split(":").map((x) => Number(x || 0));
-                        const shiftStart = new Date(`${d.date}T${pad2(shh)}:${pad2(sm)}:00`);
-                        const shiftEnd = new Date(`${d.date}T${pad2(ehh)}:${pad2(em)}:00`);
-                        if (sh.is_night || shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd.setDate(shiftEnd.getDate() + 1);
-                        if (d.firstIn) lateInMin = Math.max(0, Math.floor((d.firstIn.getTime() - shiftStart.getTime()) / 60000));
-                        if (!d?.halfDay && d.minutes < 8 * 60 && d.lastOut) earlyOutMin = Math.max(0, Math.floor((shiftEnd.getTime() - d.lastOut.getTime()) / 60000));
+                        const seg = getShiftSegmentMs({
+                          dateKey: String(d.date || "").slice(0, 10),
+                          shift: sh,
+                          isHalfDay: Boolean(d?.halfDay),
+                          halfDayPart: d?.halfDayPart,
+                          firstIn: d?.firstIn,
+                        });
+                        if (seg) {
+                          if (d.firstIn) lateInMin = Math.max(0, Math.floor((d.firstIn.getTime() - seg.segStartMs) / 60000));
+                          if (d.lastOut && Number(d.minutes || 0) > 0 && Number(d.minutes || 0) < requiredMinutes) {
+                            earlyOutMin = Math.max(0, Math.floor((seg.segEndMs - d.lastOut.getTime()) / 60000));
+                          }
+                        }
                       }
+                      if (d?.ignoreLate) lateInMin = 0;
+                      if (d?.ignoreEarly) earlyOutMin = 0;
                       const formatDelta = (mins) => (Number.isFinite(mins) && mins > 0 ? formatMinutesAsHHMM(mins) : "-");
                       const overtimeMin = Math.max(0, Number(d.minutes || 0) - requiredMinutes);
                       const isAbsent = !d.firstIn && !d.lastOut;
                       const statusParts = [];
                       if (Number.isFinite(lateInMin) && lateInMin > 30) statusParts.push("Late");
                       if (Number(d.minutes || 0) > 0 && Number(d.minutes || 0) < requiredMinutes && d.lastOut) statusParts.push("Early Left");
-                      if (d?.halfDay) statusParts.push("Half Day");
+                      if (d?.halfDay) {
+                        statusParts.push("Half Day");
+                        const p = normalizeHalfDayPart(d?.halfDayPart);
+                        if (p === "second") statusParts.push("Second Half");
+                        if (p === "first") statusParts.push("First Half");
+                      }
                       const isToday = String(d.date) === todayKey;
                       const status = isAbsent ? (isToday ? "Pending" : "Absent") : statusParts.length ? statusParts.join(" & ") : "-";
                       const dayName = (() => {
@@ -1091,32 +1239,97 @@ export default function UserDetailPage() {
                   />
                   Half Day
                 </label>
+                {Boolean(addSessionForm.half_day) && (
+                  <label className="grid gap-1">
+                    <div className="text-xs text-black/60">Half Day Part</div>
+                    <select
+                      className="rounded-md border border-black/10 px-2 py-2"
+                      value={String(addSessionForm.half_day_part || "first")}
+                      onChange={(e) => setAddSessionForm((f) => ({ ...f, half_day_part: e.target.value }))}
+                    >
+                      <option value="first">First Half</option>
+                      <option value="second">Second Half</option>
+                    </select>
+                  </label>
+                )}
                 <label className="grid gap-1">
                   <div className="text-xs text-black/60">First Login</div>
-                  <input
-                    type="datetime-local"
-                    className="rounded-md border border-black/10 px-2 py-2"
-                    value={addSessionForm.login_at}
-                    onChange={(e) => setAddSessionForm((f) => ({ ...f, login_at: e.target.value }))}
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="datetime-local"
+                      className="w-full rounded-md border border-black/10 px-2 py-2"
+                      value={addSessionForm.login_at}
+                      onChange={(e) => setAddSessionForm((f) => ({ ...f, login_at: e.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-black/10 px-2 py-2 text-xs hover:bg-black/5"
+                      onClick={() => setAddSessionForm((f) => ({ ...f, login_at: "" }))}
+                    >
+                      Clear
+                    </button>
+                  </div>
                 </label>
                 <label className="grid gap-1">
                   <div className="text-xs text-black/60">Last Logout</div>
-                  <input
-                    type="datetime-local"
-                    className="rounded-md border border-black/10 px-2 py-2"
-                    value={addSessionForm.logout_at}
-                    onChange={(e) => setAddSessionForm((f) => ({ ...f, logout_at: e.target.value }))}
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="datetime-local"
+                      className="w-full rounded-md border border-black/10 px-2 py-2"
+                      value={addSessionForm.logout_at}
+                      onChange={(e) => setAddSessionForm((f) => ({ ...f, logout_at: e.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-black/10 px-2 py-2 text-xs hover:bg-black/5"
+                      onClick={() => setAddSessionForm((f) => ({ ...f, logout_at: "" }))}
+                    >
+                      Clear
+                    </button>
+                  </div>
                 </label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(addSessionForm.ignore_late)}
+                      onChange={(e) => setAddSessionForm((f) => ({ ...f, ignore_late: e.target.checked }))}
+                    />
+                    Ignore Late
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(addSessionForm.ignore_early)}
+                      onChange={(e) => setAddSessionForm((f) => ({ ...f, ignore_early: e.target.checked }))}
+                    />
+                    Ignore Early
+                  </label>
+                </div>
               </div>
               <div className="mt-4 flex items-center justify-end gap-2">
                 <button className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5" onClick={() => setShowAddSession(false)}>
                   Cancel
                 </button>
                 <button
+                  type="button"
+                  className="rounded-md border border-black/10 px-3 py-2 hover:bg-black/5 disabled:opacity-50"
+                  disabled={addingSession}
+                  onClick={() => setAddSessionForm((f) => ({ ...f, login_at: "", logout_at: "" }))}
+                >
+                  Clear Both
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700 hover:bg-red-100 disabled:opacity-50"
+                  disabled={addingSession || !addSessionForm.work_date}
+                  onClick={clearManualDay}
+                >
+                  Clear Day
+                </button>
+                <button
                   className="rounded-md bg-heading px-3 py-2 text-background hover:bg-hover disabled:opacity-50"
-                  disabled={addingSession || !addSessionForm.work_date || !addSessionForm.login_at || !addSessionForm.logout_at}
+                  disabled={addingSession || !addSessionForm.work_date || !addSessionForm.login_at}
                   onClick={saveManualSession}
                 >
                   {addingSession ? "Saving..." : "Save"}
